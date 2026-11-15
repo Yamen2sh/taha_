@@ -22,11 +22,11 @@
   <div class="panel">
     <h3>📅 التفصيل الشهري</h3>
     <div class="table-scroll">
-      <table class="admin-table month-table">
-        <thead><tr><th>الشهر</th><th>نسبة الحضور</th><th>حاضر</th><th>متأخر</th><th>غائب</th><th>بإذن</th><th>السجلات</th></tr></thead>
+      <table class="admin-table month-table" data-sortable>
+        <thead><tr><th data-sort>الشهر</th><th data-sort>نسبة الحضور</th><th data-sort>حاضر</th><th data-sort>متأخر</th><th data-sort>غائب</th><th data-sort>بإذن</th><th data-sort>السجلات</th></tr></thead>
         <tbody>
           {% for m in st.monthly %}
-          <tr><td style="text-align:right">{{ m.label }}</td>
+          <tr><td style="text-align:right" data-v="{{ m.key }}">{{ m.label }}</td>
             <td class="{% if m.rate is None %}{% elif m.rate >= 85 %}rate-good{% elif m.rate >= 65 %}rate-mid{% else %}rate-bad{% endif %}">{% if m.rate is not None %}{{ m.rate }}%{% else %}—{% endif %}</td>
             <td>{{ m.pct_present }}%</td><td>{{ m.pct_late }}%</td><td>{{ m.pct_absent }}%</td><td>{{ m.pct_excused }}%</td><td>{{ m.total }}</td></tr>
           {% endfor %}
@@ -61,8 +61,8 @@
     {% if kind == "students" %}{{ st.sources|json_script:"students-sources" }}{% else %}{{ st.sources|json_script:"staff-sources" }}{% endif %}
     <div class="chart-box" data-chart="rates" data-src="{{ kind }}-sources"></div>
     <div class="table-scroll" style="margin-top:10px">
-      <table class="admin-table">
-        <thead><tr><th>المصدر</th><th>نسبة الحضور</th><th>حاضر</th><th>تأخر</th><th>غائب</th><th>إذن</th><th>السجلات</th></tr></thead>
+      <table class="admin-table" data-sortable>
+        <thead><tr><th data-sort>المصدر</th><th data-sort>نسبة الحضور</th><th data-sort>حاضر</th><th data-sort>تأخر</th><th data-sort>غائب</th><th data-sort>إذن</th><th data-sort>السجلات</th></tr></thead>
         <tbody>
           {% for r in st.sources %}
           <tr><td>{{ r.label }}</td>
@@ -77,6 +77,7 @@
 
   <div class="panel">
     <h3>{{ people_title }} <small style="color:#9c8a71;font-weight:400">({{ st.people_total }})</small></h3>
+    <p class="chart-note" style="margin:0 0 8px">النسب محسوبة من <b>أيام الدوام المسجّلة لرفاقه</b> في {% if kind == "students" %}حلقته/دورته{% else %}حلقاته/دوراته أو التفقد العام{% endif %} ضمن الفترة، لا من سجلاته فقط؛ والأيام التي لم يُسجَّل له فيها تُحتسب «لم يُسجَّل» وتخفض نسبة حضوره. اضغط على عنوان أي عمود للفرز.</p>
     {% if kind == "students" %}
     <form method="get" class="tbl-tools" action="#students-table">
       {% for k, vals in request.GET.lists %}{% if k != 'q' and k != 'page' %}{% for v in vals %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}{% endif %}{% endfor %}
@@ -86,19 +87,39 @@
     </form>
     {% endif %}
     <div class="table-scroll" id="{{ kind }}-table">
-      <table class="admin-table"{% if kind != "students" %} data-pager="20"{% endif %}>
-        <thead><tr><th>الاسم</th>{% if kind == "students" %}<th>العمر</th><th>السبر</th>{% endif %}<th>نسبة الحضور</th><th>التوزّع</th><th>حاضر</th><th>تأخر</th><th>غائب</th><th>إذن</th></tr></thead>
+      <table class="admin-table"{% if kind != "students" %} data-pager="20" data-sortable{% endif %}>
+        <thead><tr>
+          {% if kind == "students" %}
+          <th><a href="{{ sort_links.name.url }}">الاسم{{ sort_links.name.arrow }}</a> · <a href="{{ sort_links.circle.url }}">الحلقة{{ sort_links.circle.arrow }}</a></th>
+          <th><a href="{{ sort_links.age.url }}">العمر{{ sort_links.age.arrow }}</a></th>
+          <th><a href="{{ sort_links.sabr.url }}">السبر{{ sort_links.sabr.arrow }}</a></th>
+          <th><a href="{{ sort_links.rate.url }}">نسبة الحضور{{ sort_links.rate.arrow }}</a></th>
+          <th><a href="{{ sort_links.diff.url }}">مقارنةً بحلقته{{ sort_links.diff.arrow }}</a></th>
+          <th>التوزّع</th>
+          <th><a href="{{ sort_links.present.url }}">حاضر{{ sort_links.present.arrow }}</a></th>
+          <th><a href="{{ sort_links.late.url }}">تأخر{{ sort_links.late.arrow }}</a></th>
+          <th><a href="{{ sort_links.absence.url }}">غائب{{ sort_links.absence.arrow }}</a></th>
+          <th><a href="{{ sort_links.excused.url }}">إذن{{ sort_links.excused.arrow }}</a></th>
+          <th><a href="{{ sort_links.unrecorded.url }}">لم يُسجَّل{{ sort_links.unrecorded.arrow }}</a></th>
+          {% else %}
+          <th data-sort>الاسم</th><th data-sort>نسبة الحضور</th><th data-sort>مقارنةً بالكادر</th><th>التوزّع</th>
+          <th data-sort>حاضر</th><th data-sort>تأخر</th><th data-sort>غائب</th><th data-sort>إذن</th><th data-sort>لم يُسجَّل</th>
+          {% endif %}
+        </tr></thead>
         <tbody>
           {% for p in st.people %}
           <tr>
-            <td>{% if kind == "students" %}<a href="{% url 'student_profile' p.id %}" class="student-link">{{ p.name }}</a>{% else %}<a href="{% url 'teacher_profile' p.id %}">{{ p.name }}</a>{% endif %}
+            <td data-v="{{ p.name }}">{% if kind == "students" %}<a href="{% url 'student_profile' p.id %}" class="student-link">{{ p.name }}</a>{% else %}<a href="{% url 'teacher_profile' p.id %}" class="student-link">{{ p.name }}</a>{% endif %}
                 {% if p.sub %}<div class="absence-stats"><span>{{ p.sub }}</span></div>{% endif %}</td>
             {% if kind == "students" %}<td>{% if p.age is not None %}{{ p.age }}{% else %}<span style="color:#c9b892">—</span>{% endif %}</td><td>{{ p.sabr|default:"0" }}</td>{% endif %}
-            <td class="{% if p.rate is None %}{% elif p.rate >= 85 %}rate-good{% elif p.rate >= 65 %}rate-mid{% else %}rate-bad{% endif %}">{% if p.rate is not None %}{{ p.rate }}%{% else %}—{% endif %}</td>
-            <td><div class="pct-bar" title="حاضر {{ p.pct_present }}% · تأخر {{ p.pct_late }}% · غائب {{ p.pct_absent }}% · إذن {{ p.pct_excused }}%"><i class="s-present" style="width:{{ p.pct_present }}%"></i><i class="s-late" style="width:{{ p.pct_late }}%"></i><i class="s-absent" style="width:{{ p.pct_absent }}%"></i><i class="s-excused" style="width:{{ p.pct_excused }}%"></i></div></td>
-            <td class="pct-cell">{{ p.pct_present }}%</td><td class="pct-cell">{{ p.pct_late }}%</td><td class="pct-cell">{{ p.pct_absent }}%</td><td class="pct-cell">{{ p.pct_excused }}%</td>
+            <td data-v="{{ p.rate|default_if_none:'' }}" class="{% if p.rate is None %}{% elif p.rate >= 85 %}rate-good{% elif p.rate >= 65 %}rate-mid{% else %}rate-bad{% endif %}">{% if p.rate is not None %}{{ p.rate }}%{% else %}—{% endif %}
+              <div class="cmp-sub">{{ p.total }} من {{ p.expected }} يوماً</div></td>
+            <td data-v="{{ p.diff|default_if_none:'' }}">{% if p.diff is not None %}<b class="{% if p.diff > 0 %}rate-good{% elif p.diff < 0 %}rate-bad{% endif %}" dir="ltr">{{ p.diff|stringformat:"+d" }}</b>
+              <div class="cmp-sub">المتوسط {{ p.peer_avg }}% · الترتيب {{ p.rank }}/{{ p.peer_n }}</div>{% else %}—{% endif %}</td>
+            <td><div class="pct-bar" title="حاضر {{ p.pct_present }}% · تأخر {{ p.pct_late }}% · غائب {{ p.pct_absent }}% · إذن {{ p.pct_excused }}% · لم يُسجَّل {{ p.pct_unrecorded }}%"><i class="s-present" style="width:{{ p.pct_present }}%"></i><i class="s-late" style="width:{{ p.pct_late }}%"></i><i class="s-absent" style="width:{{ p.pct_absent }}%"></i><i class="s-excused" style="width:{{ p.pct_excused }}%"></i></div></td>
+            <td class="pct-cell">{{ p.pct_present }}%</td><td class="pct-cell">{{ p.pct_late }}%</td><td class="pct-cell">{{ p.pct_absent }}%</td><td class="pct-cell">{{ p.pct_excused }}%</td><td class="pct-cell">{{ p.pct_unrecorded }}%</td>
           </tr>
-          {% empty %}<tr><td colspan="9" style="text-align:center;color:#9c8a71">لا نتائج</td></tr>
+          {% empty %}<tr><td colspan="11" style="text-align:center;color:#9c8a71">لا نتائج</td></tr>
           {% endfor %}
         </tbody>
       </table>

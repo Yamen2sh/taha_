@@ -32,6 +32,9 @@
       <option value="circle" {% if sort == 'circle' %}selected{% endif %}>حسب الحلقة</option>
       <option value="age" {% if sort == 'age' %}selected{% endif %}>حسب العمر</option>
       <option value="name" {% if sort == 'name' %}selected{% endif %}>أبجدياً</option>
+      <option value="diff" {% if sort == 'diff' %}selected{% endif %}>الأفضل مقارنةً بحلقته</option>
+      <option value="unrecorded" {% if sort == 'unrecorded' %}selected{% endif %}>الأكثر أياماً غير مسجّلة</option>
+      {% if sort == 'sabr' or sort == 'present' or sort == 'late' or sort == 'excused' %}<option value="{{ sort }}" selected>حسب العمود المختار</option>{% endif %}
     </select>
   </label>
   <label>العمر من
@@ -69,8 +72,8 @@
   <div class="panel">
     <h3>السبر حسب الحلقة</h3>
     <div class="table-scroll">
-      <table class="admin-table month-table">
-        <thead><tr><th>الحلقة</th><th>الطلاب</th><th>سُبِروا</th><th>النسبة</th><th>مرات السبر</th></tr></thead>
+      <table class="admin-table month-table" data-sortable>
+        <thead><tr><th data-sort>الحلقة</th><th data-sort>الطلاب</th><th data-sort>سُبِروا</th><th data-sort>النسبة</th><th data-sort>مرات السبر</th></tr></thead>
         <tbody>{% for r in sabr_stats.circles %}<tr><td style="text-align:right">{{ r.label }}</td><td>{{ r.students }}</td><td>{{ r.done }}</td>
           <td class="{% if r.pct >= 70 %}rate-good{% elif r.pct >= 40 %}rate-mid{% else %}rate-bad{% endif %}">{{ r.pct }}%</td><td>{{ r.count }}</td></tr>{% endfor %}</tbody>
       </table>

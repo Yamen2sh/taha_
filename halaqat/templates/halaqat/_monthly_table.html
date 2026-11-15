@@ -1,0 +1,29 @@
+{% if monthly %}
+<div class="panel" style="margin-bottom:16px;">
+  <h3>📅 الحضور الشهري (كل شهر ميلادي على حدة)</h3>
+  <div class="table-scroll">
+    <table class="admin-table month-table" data-sortable>
+      <thead><tr><th data-sort>الشهر</th><th data-sort>نسبة الحضور</th><th data-sort>أيام الدوام</th><th data-sort>حاضر</th><th data-sort>تأخر</th><th data-sort>غائب</th><th data-sort>إذن</th><th data-sort>لم يُسجَّل</th></tr></thead>
+      <tbody>
+        {% for m in monthly %}
+        <tr><td style="text-align:right" data-v="{{ m.key }}">{{ m.label }}</td>
+          <td data-v="{{ m.rate|default_if_none:'' }}" class="{% if m.rate is None %}{% elif m.rate >= 85 %}rate-good{% elif m.rate >= 65 %}rate-mid{% else %}rate-bad{% endif %}">{% if m.rate is not None %}{{ m.rate }}%{% else %}—{% endif %}</td>
+          <td>{{ m.expected }}</td>
+          <td data-v="{{ m.present }}">{{ m.present }} <span class="cmp-sub">({{ m.pct_present }}%)</span></td>
+          <td data-v="{{ m.late }}">{{ m.late }} <span class="cmp-sub">({{ m.pct_late }}%)</span></td>
+          <td data-v="{{ m.absent }}">{{ m.absent }} <span class="cmp-sub">({{ m.pct_absent }}%)</span></td>
+          <td data-v="{{ m.excused }}">{{ m.excused }} <span class="cmp-sub">({{ m.pct_excused }}%)</span></td>
+          <td data-v="{{ m.unrecorded }}">{{ m.unrecorded }} <span class="cmp-sub">({{ m.pct_unrecorded }}%)</span></td></tr>
+        {% endfor %}
+        {% with m=monthly_total %}
+        <tr class="total"><td style="text-align:right">{{ m.label }}</td>
+          <td>{% if m.rate is not None %}{{ m.rate }}%{% else %}—{% endif %}</td><td>{{ m.expected }}</td>
+          <td>{{ m.present }} ({{ m.pct_present }}%)</td><td>{{ m.late }} ({{ m.pct_late }}%)</td><td>{{ m.absent }} ({{ m.pct_absent }}%)</td>
+          <td>{{ m.excused }} ({{ m.pct_excused }}%)</td><td>{{ m.unrecorded }} ({{ m.pct_unrecorded }}%)</td></tr>
+        {% endwith %}
+      </tbody>
+    </table>
+  </div>
+  <p class="chart-note">أيام الدوام = الأيام التي سُجّل فيها حضور لرفاقه. نسبة الحضور = (حاضر + تأخر) ÷ (أيام الدوام − الإذن)، فالأيام غير المسجّلة تخفض النسبة.</p>
+</div>
+{% endif %}

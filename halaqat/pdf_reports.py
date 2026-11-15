@@ -299,20 +299,22 @@ def _population_section(kind, title, st):
     if kind == 'students':
         out.append(_line(f'سجل الطلاب ({st["people_total"]} طالب)', 10.5, keep=True))
         out.append(_rtl_table(
-            ['الاسم', 'الحلقة', 'العمر', 'السبر', 'الحضور', 'حاضر', 'تأخر', 'غائب', 'إذن'],
+            ['الاسم', 'الحلقة', 'العمر', 'السبر', 'الحضور', 'عن حلقته', 'حاضر', 'تأخر', 'غائب', 'إذن', 'لم يُسجَّل'],
             [[p['name'], p['sub'], p.get('age') if p.get('age') is not None else '—', p.get('sabr', 0), _pct(p['rate']),
-              _p(p['pct_present']), _p(p['pct_late']), _p(p['pct_absent']), _p(p['pct_excused'])]
+              f"{p['diff']:+d}" if p.get('diff') is not None else '—',
+              _p(p['pct_present']), _p(p['pct_late']), _p(p['pct_absent']), _p(p['pct_excused']), _p(p['pct_unrecorded'])]
              for p in st['people']],
-            [120, 90, 32, 32, 46, 48, 48, 48, 51], name_cols=(0, 1),
-            header_colors={5: C_PRESENT, 6: C_LATE, 7: C_ABSENT, 8: C_EXCUSED}))
+            [104, 78, 28, 28, 40, 42, 38, 38, 38, 36, 45], name_cols=(0, 1),
+            header_colors={6: C_PRESENT, 7: C_LATE, 8: C_ABSENT, 9: C_EXCUSED}))
     else:
         out.append(_line(f'سجل الكادر ({st["people_total"]})', 10.5, keep=True))
         out.append(_rtl_table(
-            ['الاسم', 'الحضور', 'حاضر', 'تأخر', 'غائب', 'إذن'],
-            [[p['name'], _pct(p['rate']), _p(p['pct_present']), _p(p['pct_late']), _p(p['pct_absent']), _p(p['pct_excused'])]
+            ['الاسم', 'الحضور', 'عن الكادر', 'حاضر', 'تأخر', 'غائب', 'إذن', 'لم يُسجَّل'],
+            [[p['name'], _pct(p['rate']), f"{p['diff']:+d}" if p.get('diff') is not None else '—',
+              _p(p['pct_present']), _p(p['pct_late']), _p(p['pct_absent']), _p(p['pct_excused']), _p(p['pct_unrecorded'])]
              for p in st['people']],
-            [215, 60, 60, 60, 60, 60],
-            header_colors={2: C_PRESENT, 3: C_LATE, 4: C_ABSENT, 5: C_EXCUSED}))
+            [165, 50, 50, 50, 50, 50, 50, 50],
+            header_colors={3: C_PRESENT, 4: C_LATE, 5: C_ABSENT, 6: C_EXCUSED}))
     out.append(Spacer(1, 14))
     return out
 
@@ -373,7 +375,7 @@ def build_stats_pdf(ctx):
             f"إلى {ctx['age_max']}" if ctx.get('age_max') is not None else '') if x), 10.5)]
           if ctx.get('age_min') is not None or ctx.get('age_max') is not None else []),
         _line(f"تاريخ إنشاء التقرير: {now:%Y-%m-%d %H:%M}", 8.5, colors.grey),
-        _line('نسبة الحضور = (حاضر + تأخر) ÷ (حاضر + تأخر + غائب)، ولا يُحتسب الإذن.', 8.5, colors.grey),
+        _line('نسبة حضور الفرد = (حاضر + تأخر) ÷ (أيام دوام رفاقه − الإذن)؛ الأيام غير المسجّلة له تخفض نسبته.', 8.5, colors.grey),
         Spacer(1, 6),
     ]
     if ctx['students_stats'] is not None:

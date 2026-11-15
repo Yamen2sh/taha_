@@ -950,7 +950,16 @@ def student_profile(request, student_id):
     paginator = Paginator(circle_records, 30)
     page_obj = paginator.get_page(request.GET.get('page'))
 
+    # الحضور الشهري: أيام الدوام = الأيام التي سُجّل فيها حضور في حلقته (أو الحلقات التي مرّ بها)
+    recs = list(circle_records.values_list('circle_id', 'date', 'status'))
+    circle_ids = {c for c, _, _ in recs} | {student.circle_id}
+    session_days = Attendance.objects.filter(circle_id__in=circle_ids).values_list('date', flat=True).distinct()
+    monthly, monthly_total = _monthly_attendance(
+        [(None, d, st) for _, d, st in recs], {(None, d) for d in session_days},
+        since=timezone.localtime(student.joined_at).date() if student.joined_at else None)
+
     context = {
+        'monthly': monthly, 'monthly_total': monthly_total,
         'student': student,
         'stats': stats,
         'rate_30': student.attendance_rate(30),
@@ -964,6 +973,50 @@ def student_profile(request, student_id):
         'active_nav': None,
     }
     return render(request, 'halaqat/student_profile.html', context)
+
+
+def _monthly_attendance(records, expected, since=None):
+    """
+    حضور كل شهر ميلادي على حدة.
+    records: [(مفتاح الجلسة، التاريخ، الحالة)] — expected: {(مفتاح الجلسة، التاريخ)} أيام الدوام الفعلية.
+    الأيام التي كان فيها دوام ولم يُسجَّل له فيها شيء تُحسب «لم يُسجَّل» (منذ أول سجل له).
+    يعيد (صفوف الأشهر من الأحدث للأقدم، صف المجمل).
+    """
+    records = list(records)
+    if not records:
+        return [], None
+    first = min(d for _, d, _ in records)
+    if since and since < first:
+        first = since
+    slots = {(k, d) for k, d in expected if d >= first} | {(k, d) for k, d, _ in records}
+    months = {}
+
+    def row(m):
+        return months.setdefault(m, {**_blank_counts(), 'expected': 0})
+    for _, d in slots:
+        row(d.replace(day=1))['expected'] += 1
+    for _, d, st in records:
+        if st in _STAT_KEYS:
+            row(d.replace(day=1))[st] += 1
+
+    def finish(c, label, key=''):
+        exp = c['expected']
+        rec = sum(c[k] for k in _STAT_KEYS)
+        base = exp - c['excused']
+        out = {'label': label, 'key': key, **c, 'total': rec, 'unrecorded': max(exp - rec, 0),
+               'rate': round((c['present'] + c['late']) / base * 100) if base > 0 else None}
+        for k in _STAT_KEYS:
+            out['pct_' + k] = round(c[k] / exp * 100) if exp else 0
+        out['pct_unrecorded'] = round(out['unrecorded'] / exp * 100) if exp else 0
+        return out
+
+    rows = [finish(c, f'{_MONTHS_AR[m.month - 1]} {m.year}', m.strftime('%Y-%m'))
+            for m, c in sorted(months.items(), reverse=True)]
+    tot = {'expected': 0, **_blank_counts()}
+    for c in months.values():
+        for k in tot:
+            tot[k] += c[k]
+    return rows, finish(tot, 'المجمل')
 
 
 def _student_sabr_stats(student):
@@ -1022,7 +1075,24 @@ def teacher_profile(request, teacher_id):
     paginator = Paginator(combined, 30)
     page_obj = paginator.get_page(request.GET.get('page'))
 
+    # الحضور الشهري من كل المصادر. أيام الدوام: أيام تسجيل طلاب حلقاته/دوراته، وأيام التفقد العام
+    recs = ([(('c', r.circle_id), r.date, r.status) for r in circle_records]
+            + [(('k', r.course_id), r.date, r.status) for r in course_records]
+            + [(('g', 0), r.date, r.status) for r in general_records])
+    expected = set()
+    c_ids = {r.circle_id for r in circle_records} | set(teacher.circles.values_list('id', flat=True))
+    k_ids = {r.course_id for r in course_records} | set(teacher.courses.values_list('id', flat=True))
+    for cid, d in Attendance.objects.filter(circle_id__in=c_ids).values_list('circle_id', 'date').distinct():
+        expected.add((('c', cid), d))
+    for kid, d in CourseAttendance.objects.filter(course_id__in=k_ids).values_list('course_id', 'date').distinct():
+        expected.add((('k', kid), d))
+    if general_records:
+        for d in TeacherDailyAttendance.objects.values_list('date', flat=True).distinct():
+            expected.add((('g', 0), d))
+    monthly, monthly_total = _monthly_attendance(recs, expected)
+
     context = {
+        'monthly': monthly, 'monthly_total': monthly_total,
         'teacher': teacher,
         'stats': stats,
         'page_obj': page_obj,
@@ -1588,7 +1658,7 @@ def _bucket_label(k, mode):
 
 
 def _stats_population(sources, start, end, top_limit=None, sort='absence', student_meta=None,
-                      page_size=None, page=1, q=''):
+                      page_size=None, page=1, q='', sort_dir=None):
     """
     يجمّع إحصائيات فئة واحدة (طلاب أو كادر) من عدة مصادر سجلات ضمن الفترة [start, end].
     كل مصدر: dict(qs, label, pid, pname, psub)  — label نص ثابت أو اسم حقل (يبدأ بـ '@').
@@ -1599,19 +1669,41 @@ def _stats_population(sources, start, end, top_limit=None, sort='absence', stude
     by_source = {}
     by_date = defaultdict(_blank_counts)
     people = {}
+    own_dates = defaultdict(lambda: defaultdict(set))   # pid → (رقم المصدر، المجموعة) → تواريخ سجلاته
+    group_dates = {}                                    # (رقم المصدر، المجموعة) → أيام الدوام المسجّلة لرفاقه
+    first_ever = {}                                     # pid → تاريخ أول سجل له
 
-    for src in sources:
+    for si, src in enumerate(sources):
         qs = src['qs'].filter(date__gte=start, date__lte=end)
         label_is_field = src['label'].startswith('@')
-        fields = [src['pid'], src['pname'], src.get('psub') or src['pid'], 'date', 'status']
+        gfield = src.get('group')
+        fields = [src['pid'], src['pname'], src.get('psub') or src['pid'], 'date', 'status',
+                  gfield or src['pid']]
         if label_is_field:
             fields.append(src['label'][1:])
+
+        # أيام الدوام الفعلية لكل مجموعة (حلقة/دورة): أي يوم سُجّل فيه حضور لأي فرد منها
+        eqs, efield = src.get('expected') or (src['qs'], gfield)
+        eqs = eqs.filter(date__gte=start, date__lte=end)
+        if efield:
+            for g, d in eqs.values_list(efield, 'date').distinct():
+                group_dates.setdefault((si, g), set()).add(d)
+        else:
+            group_dates[(si, None)] = set(eqs.values_list('date', flat=True).distinct())
+
+        # أول سجل للشخص على الإطلاق: الأيام السابقة له لا تُحسب عليه (لم يكن منضماً بعد)
+        from django.db.models import Min
+        for pid, first in src['qs'].values_list(src['pid']).annotate(f=Min('date')):
+            if first and (pid not in first_ever or first < first_ever[pid]):
+                first_ever[pid] = first
+
         for row in qs.values_list(*fields):
             pid, pname, psub, d, status = row[:5]
             if status not in total:
                 continue
+            own_dates[pid][(si, row[5] if gfield else None)].add(d)
             if label_is_field:
-                pre, val = src.get('prefix', ''), str(row[5])
+                pre, val = src.get('prefix', ''), str(row[6])
                 label = val if val.startswith(pre.strip()) else pre + val   # تجنّب «حلقة حلقة …»
             else:
                 label = src['label']
@@ -1646,10 +1738,34 @@ def _stats_population(sources, start, end, top_limit=None, sort='absence', stude
                       **{x: c[x] for x in _STAT_KEYS}, 'total': c['total'], 'rate': c['rate'],
                       **{'pct_' + x: c['pct_' + x] for x in _STAT_KEYS}})
 
-    # الأشخاص
+    # الأشخاص — النسب تُحسب من «أيام الدوام المتوقعة» (كل الأيام التي سُجّل فيها حضور
+    # لرفاقه في حلقته/دورته)، لا من سجلاته هو فقط؛ فمن له سجل واحد لا تصبح نسبته 100%.
     people_rows = []
     for p in people.values():
-        p.update(_with_pcts({k: p[k] for k in _STAT_KEYS}))
+        expected = 0
+        exclusive_days = set()
+        joined = first_ever.get(p['id'], start)
+        if student_meta is not None:              # تاريخ انضمام الطالب إن كان أسبق من أول سجل له
+            j = student_meta.get(p['id'], {}).get('joined')
+            if j and j < joined:
+                joined = j
+        for (si, g), mine in own_dates[p['id']].items():
+            days = {d for d in group_dates.get((si, g), ()) if d >= joined} | mine
+            if sources[si].get('exclusive'):
+                exclusive_days |= days          # حلقة واحدة في اليوم (حتى لو انتقل الطالب بين حلقتين)
+            else:
+                expected += len(days)
+        expected += len(exclusive_days)
+        recorded = sum(p[k] for k in _STAT_KEYS)
+        expected = max(expected, recorded)
+        p['total'] = recorded
+        p['expected'] = expected
+        p['unrecorded'] = expected - recorded
+        for k in _STAT_KEYS:
+            p['pct_' + k] = round(p[k] / expected * 100) if expected else 0
+        p['pct_unrecorded'] = round(p['unrecorded'] / expected * 100) if expected else 0
+        base = expected - p['excused']          # الإذن مستبعد، وغير المسجّل يُحتسب عدم حضور
+        p['rate'] = round((p['present'] + p['late']) / base * 100) if base > 0 else None
         if student_meta is not None:
             meta = student_meta.get(p['id'], {})
             p['age'] = meta.get('age')
@@ -1657,16 +1773,43 @@ def _stats_population(sources, start, end, top_limit=None, sort='absence', stude
             p['sabr'] = meta.get('sabr', 0)
         people_rows.append(p)
 
-    def k_rate(p):
-        return p['rate'] if p['rate'] is not None else 101
-    sorters = {
-        'absence': lambda p: (-p['pct_absent'], -p['pct_late'], p['name']),
-        'rate': lambda p: (-(p['rate'] if p['rate'] is not None else -1), p['name']),
-        'name': lambda p: p['name'],
-        'age': lambda p: (p.get('age') is None, p.get('age') or 0, p['name']),
-        'circle': lambda p: (p.get('circle_order', 9999), p['sub'], k_rate(p), p['name']),
+    # المقارنة بالرفاق: متوسط نسبة حضور المجموعة (حلقة الطالب / كل الكادر)، الفرق عنه، والترتيب
+    peers = defaultdict(list)
+    for p in people_rows:
+        if p['rate'] is not None:
+            peers[p['sub']].append(p['rate'])
+    for p in people_rows:
+        rates = peers.get(p['sub'], [])
+        if p['rate'] is None or not rates:
+            p['peer_avg'] = p['diff'] = p['rank'] = None
+            p['peer_n'] = len(rates)
+            continue
+        p['peer_avg'] = round(sum(rates) / len(rates))
+        p['diff'] = p['rate'] - p['peer_avg']
+        p['rank'] = 1 + sum(1 for r in rates if r > p['rate'])
+        p['peer_n'] = len(rates)
+
+    # الفرز: (دالة القيمة، الاتجاه الافتراضي) — القيم الفارغة دائماً في الآخر
+    sort_keys = {
+        'absence': (lambda p: p['pct_absent'], 'desc'),
+        'rate': (lambda p: p['rate'], 'desc'),
+        'name': (lambda p: p['name'], 'asc'),
+        'age': (lambda p: p.get('age'), 'asc'),
+        'circle': (lambda p: (p.get('circle_order', 9999), p['sub']), 'asc'),
+        'sabr': (lambda p: p.get('sabr', 0), 'desc'),
+        'present': (lambda p: p['pct_present'], 'desc'),
+        'late': (lambda p: p['pct_late'], 'desc'),
+        'excused': (lambda p: p['pct_excused'], 'desc'),
+        'unrecorded': (lambda p: p['pct_unrecorded'], 'desc'),
+        'diff': (lambda p: p['diff'], 'desc'),
     }
-    people_rows.sort(key=sorters.get(sort, sorters['absence']))
+    keyf, default_dir = sort_keys.get(sort, sort_keys['absence'])
+    direction = sort_dir if sort_dir in ('asc', 'desc') else default_dir
+    people_rows.sort(key=lambda p: p['name'])
+    with_val = [p for p in people_rows if keyf(p) is not None]
+    without = [p for p in people_rows if keyf(p) is None]
+    with_val.sort(key=keyf, reverse=(direction == 'desc'))
+    people_rows = with_val + without
 
     # فلترة بالاسم/الحلقة + تقسيم لصفحات (لتخفيف حجم الصفحة وسرعة التحميل)
     filtered = people_rows
@@ -1705,6 +1848,7 @@ def _stats_population(sources, start, end, top_limit=None, sort='absence', stude
         'pages': pages,
         'page_range': list(range(1, pages + 1)),
         'people_filtered': len(filtered),
+        'sort_dir': direction,
         **_with_pcts(total),
         'counts': total,
         'sources': source_rows,
@@ -1787,8 +1931,10 @@ def _stats_context(request, top_limit=None, paginate=False):
     if who not in ('students', 'staff', 'both'):
         who = 'both'
     sort = g.get('sort', 'absence')
-    if sort not in ('absence', 'rate', 'name', 'age', 'circle'):
+    if sort not in ('absence', 'rate', 'name', 'age', 'circle', 'sabr', 'present', 'late',
+                    'excused', 'unrecorded', 'diff'):
         sort = 'absence'
+    sort_dir = g.get('dir') if g.get('dir') in ('asc', 'desc') else None
 
     def _int(v):
         try:
@@ -1820,20 +1966,27 @@ def _stats_context(request, top_limit=None, paginate=False):
 
     # ── مصادر البيانات حسب النطاق ──
     att_qs = Attendance.objects.filter(**age_q)
+    # expected = (استعلام، حقل المجموعة) تُستخرج منه أيام الدوام الفعلية لكل حلقة/دورة
+    circle_days = Attendance.objects.filter(circle=circle) if circle else Attendance.objects.all()
     student_sources = [dict(qs=att_qs, label='@circle__name', prefix='حلقة ',
-                            pid='student_id', pname='student__name', psub='circle__name')]
+                            pid='student_id', pname='student__name', psub='circle__name',
+                            group='circle_id', expected=(circle_days, 'circle_id'), exclusive=True)]
     staff_sources = [dict(qs=TeacherAttendance.objects.all(), label='@circle__name', prefix='حلقة ',
-                          pid='teacher_id', pname='teacher__name')]
+                          pid='teacher_id', pname='teacher__name',
+                          group='circle_id', expected=(circle_days, 'circle_id'))]
     if circle:
         student_sources[0]['qs'] = att_qs.filter(circle=circle)
         staff_sources[0]['qs'] = TeacherAttendance.objects.filter(circle=circle)
     else:
         student_sources.append(dict(qs=CourseAttendance.objects.filter(**age_q), label='@course__name', prefix='دورة ',
-                                    pid='student_id', pname='student__name', psub='student__circle__name'))
+                                    pid='student_id', pname='student__name', psub='student__circle__name',
+                                    group='course_id', expected=(CourseAttendance.objects.all(), 'course_id')))
         staff_sources.append(dict(qs=CourseTeacherAttendance.objects.all(), label='@course__name', prefix='دورة ',
-                                  pid='teacher_id', pname='teacher__name'))
+                                  pid='teacher_id', pname='teacher__name',
+                                  group='course_id', expected=(CourseAttendance.objects.all(), 'course_id')))
         staff_sources.append(dict(qs=TeacherDailyAttendance.objects.all(), label='التفقد العام',
-                                  pid='teacher_id', pname='teacher__name'))
+                                  pid='teacher_id', pname='teacher__name',
+                                  expected=(TeacherDailyAttendance.objects.all(), None)))
 
     student_meta = None
     if who in ('students', 'both'):
@@ -1843,8 +1996,9 @@ def _stats_context(request, top_limit=None, paginate=False):
         sabr_counts = Counter(Sabr.objects.filter(date__gte=start, date__lte=end).values_list('student_id', flat=True))
         student_meta = {
             sid: {'age': age_from_birth_date(bd, today) if bd else None, 'circle_order': order.get(cid, 9999),
-                  'sabr': sabr_counts.get(sid, 0)}
-            for sid, bd, cid in Student.objects.values_list('id', 'birth_date', 'circle_id')
+                  'sabr': sabr_counts.get(sid, 0),
+                  'joined': timezone.localtime(ja).date() if ja else None}
+            for sid, bd, cid, ja in Student.objects.values_list('id', 'birth_date', 'circle_id', 'joined_at')
         }
 
     try:
@@ -1854,7 +2008,7 @@ def _stats_context(request, top_limit=None, paginate=False):
     q = (g.get('q') or '').strip()
     students_stats = (_stats_population(student_sources, start, end, top_limit=top_limit, sort=sort,
                                         student_meta=student_meta, page_size=25 if paginate else None,
-                                        page=page, q=q)
+                                        page=page, q=q, sort_dir=sort_dir)
                       if who in ('students', 'both') else None)
     staff_sort = sort if sort in ('absence', 'rate', 'name') else 'absence'
     staff_stats = _stats_population(staff_sources, start, end, sort=staff_sort) if who in ('staff', 'both') else None
@@ -1878,10 +2032,28 @@ def _stats_context(request, top_limit=None, paginate=False):
         'has_birth_dates': Student.objects.filter(birth_date__isnull=False).exists(),
         'students_stats': students_stats, 'staff_stats': staff_stats,
         'sabr_stats': sabr_stats,
+        'sort_links': _sort_links(request, sort, students_stats['sort_dir'] if students_stats else None),
         'q': q, 'page_qs': page_qs.urlencode(),
         'keep_qs_noq': '&'.join(f'{k}={v}' for k, v in page_qs.items() if k != 'q'),
         'first_record': first_record,
     }
+
+
+def _sort_links(request, sort, direction):
+    """روابط ترويسات جدول الطلاب: الضغط يفرز، والضغط ثانيةً يعكس الاتجاه."""
+    base = request.GET.copy()
+    for k in ('sort', 'dir', 'page'):
+        base.pop(k, None)
+    base = base.urlencode()
+    out = {}
+    for key in ('name', 'age', 'sabr', 'rate', 'diff', 'present', 'late', 'absence', 'excused', 'unrecorded', 'circle'):
+        active = key == sort
+        nxt = ('asc' if direction == 'desc' else 'desc') if active else ''
+        out[key] = {
+            'url': f"?{base}{'&' if base else ''}sort={key}{'&dir=' + nxt if nxt else ''}#students-table",
+            'arrow': (' ▼' if direction == 'desc' else ' ▲') if active else '',
+        }
+    return out
 
 
 def _sabr_stats(start, end, circle, age_q, circles):

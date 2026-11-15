@@ -731,3 +731,12 @@ button, input, select, textarea { font-family: inherit; }
 .dd-multi .dd-box label{justify-content:flex-start;width:auto;margin:0;font-weight:500}
 .dd-multi .dd-box input[type=checkbox]{width:18px!important;height:18px;flex:0 0 18px;margin:0;padding:0}
 .dd-multi .dd-box label span{flex:1;text-align:right}
+
+/* ── فرز الجداول + المقارنة بالرفاق ── */
+th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
+th.sortable::after{content:' ⇅';opacity:.35;font-size:.85em}
+th.sortable[data-dir=asc]::after{content:' ▲';opacity:1}
+th.sortable[data-dir=desc]::after{content:' ▼';opacity:1}
+.admin-table thead th a{color:inherit;text-decoration:none;white-space:nowrap}
+.admin-table thead th a:hover{text-decoration:underline}
+.cmp-sub{font-size:10.5px;font-weight:400;color:#9c8a71;white-space:nowrap}

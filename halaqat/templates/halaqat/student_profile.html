@@ -61,6 +61,8 @@
   <a href="{% url 'sabr_page' %}" class="btn-secondary" style="margin-top:10px;display:inline-block">📝 صفحة السبر</a>
 </div>
 
+{% include "halaqat/_monthly_table.html" %}
+
 <div class="panel">
   <h3>📋 سجل الحضور التفصيلي (الحلقة الأساسية) — {{ stats.total }} سجل</h3>
   {% if page_obj %}

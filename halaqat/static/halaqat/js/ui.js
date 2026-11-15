@@ -49,10 +49,43 @@
     document.addEventListener('click', e => { if (!dd.contains(e.target)) dd.open = false; });
   });
 
+  // ── فرز الجداول بالضغط على الترويسة: <table data-sortable> + <th data-sort> ──
+  document.querySelectorAll('table[data-sortable]').forEach(tbl => {
+    const ths = [...tbl.tHead.rows[0].cells];
+    const val = (row, i) => {
+      const c = row.cells[i]; if (!c) return '';
+      return c.dataset.v !== undefined ? c.dataset.v : c.textContent.trim();
+    };
+    const num = v => { const m = String(v).replace(/[٬,]/g, '').match(/^[+-]?\d+(\.\d+)?/); return m ? parseFloat(m[0]) : null; };
+    ths.forEach((th, i) => {
+      if (!th.hasAttribute('data-sort')) return;
+      th.classList.add('sortable');
+      th.addEventListener('click', () => {
+        const dir = th.dataset.dir === 'desc' ? 'asc' : 'desc';
+        ths.forEach(x => { delete x.dataset.dir; });
+        th.dataset.dir = dir;
+        const body = tbl.tBodies[0];
+        const all = [...body.rows];
+        const fixed = all.filter(r => r.classList.contains('total'));     // صفوف المجمل تبقى في الأسفل
+        const rows = all.filter(r => !r.classList.contains('total'));
+        const numeric = rows.every(r => { const v = val(r, i); return v === '' || v === '—' || num(v) !== null; });
+        rows.sort((a, b) => {
+          let x = val(a, i), y = val(b, i);
+          const ex = x === '' || x === '—', ey = y === '' || y === '—';
+          if (ex || ey) return ex - ey;                                    // الفارغ دائماً في الآخر
+          const r = numeric ? num(x) - num(y) : x.localeCompare(y, 'ar');
+          return dir === 'asc' ? r : -r;
+        });
+        rows.concat(fixed).forEach(r => body.appendChild(r));
+        tbl.dispatchEvent(new CustomEvent('tbl:sorted'));
+      });
+    });
+  });
+
   // ── جداول: <table data-pager="20"> بحث عام واحد + صفحات ──
   document.querySelectorAll('table[data-pager]').forEach(tbl => {
     const size = parseInt(tbl.dataset.pager, 10) || 20;
-    const rows = [...tbl.tBodies[0].rows];
+    let rows = [...tbl.tBodies[0].rows];
     if (rows.length <= size && !tbl.hasAttribute('data-search')) return;
     const wrap = tbl.closest('.table-scroll') || tbl;
     const tools = document.createElement('div');
@@ -65,7 +98,7 @@
     let page = 0, list = rows;
     const input = tools.querySelector('input');
     const norm = s => (window.StudentIndex ? StudentIndex.norm(s) : s.toLowerCase());
-    const texts = rows.map(r => norm(r.textContent));
+    let texts = rows.map(r => norm(r.textContent));
     const render = () => {
       const pages = Math.max(1, Math.ceil(list.length / size));
       page = Math.min(page, pages - 1);
@@ -90,10 +123,16 @@
       info.textContent = `${list.length} صف`;
       pager.appendChild(info);
     };
-    input.addEventListener('input', () => {
+    const apply = () => {
       const v = norm(input.value.trim());
       list = v ? rows.filter((r, i) => texts[i].includes(v)) : rows;
       page = 0; render();
+    };
+    input.addEventListener('input', apply);
+    tbl.addEventListener('tbl:sorted', () => {
+      rows = [...tbl.tBodies[0].rows];
+      texts = rows.map(r => norm(r.textContent));
+      apply();
     });
     render();
   });

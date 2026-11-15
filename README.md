@@ -127,3 +127,19 @@ masjid_taha/
 - استخدم قاعدة بيانات إنتاجية (PostgreSQL مثلاً) بدلاً من SQLite إن كان الاستخدام كبيراً
 - فعّل HTTPS
 - لا ترفع `telegram_secrets.py` لأي مكان عام
+
+
+## النشر على Render مع قاعدة بيانات Supabase
+
+متغيرات البيئة في Render (Environment):
+
+| المتغير | القيمة |
+|---|---|
+| `DATABASE_URL` | `postgresql://postgres.<project-ref>@aws-0-<region>.pooler.supabase.com:5432/postgres` (Session Pooler، بدون كلمة المرور وبدون تنصيص) |
+| `DB_PASSWORD` | كلمة مرور قاعدة البيانات كما هي |
+| `SECRET_KEY` · `ALLOWED_HOSTS` · `CSRF_TRUSTED_ORIGINS` | كما في `.env.example` |
+
+- **Build Command:** `./build.sh` (يثبّت المكتبات، يجمع الملفات الثابتة، ينفّذ `migrate`، وينشئ جدول الكاش `createcachetable`)
+- **Start Command:** `gunicorn masjid_taha.wsgi:application`
+- التخزين المؤقت (Django Cache) محفوظ في جدول `django_cache` داخل قاعدة البيانات.
+- لنقل البيانات الحالية من SQLite: نزّل نسخة Excel من «المطور ← تصدير Excel» محلياً، ثم استوردها على الموقع من «المطور ← استيراد Excel».

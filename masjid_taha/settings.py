@@ -47,23 +47,64 @@ CSRF_TRUSTED_ORIGINS = [
 
 # ══════════════════════════════════════════════════════════════
 #  قاعدة البيانات
-#  Render يُعيّن DATABASE_URL تلقائياً عند إضافة PostgreSQL service
-#  للتطوير المحلي: يرجع تلقائياً إلى SQLite
+#  الإنتاج (Render + Supabase): متغيّرا البيئة DATABASE_URL و DB_PASSWORD
+#    DATABASE_URL = postgresql://postgres.<ref>@aws-0-<region>.pooler.supabase.com:5432/postgres
+#    DB_PASSWORD  = كلمة مرور قاعدة البيانات (منفصلة، فلا حاجة لترميز الرموز الخاصة)
+#  (يُقبل أيضاً رابط كامل يحوي كلمة المرور بدل DB_PASSWORD)
+#  التطوير المحلي: بدون DATABASE_URL يرجع تلقائياً إلى SQLite
 # ══════════════════════════════════════════════════════════════
-# DATABASES = {
-#     'default': dj_database_url.config(
-#         default=f'sqlite:///{BASE_DIR / "db.sqlite3"}',
-#         conn_max_age=600,
-#     )
-# }
+def _clean_database_url(url):
+    """يزيل علامات التنصيص والمعاملات التي لا يفهمها libpq/psycopg (مثل ?pgbouncer=true)."""
+    from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+    url = (url or '').strip().strip('"').strip("'").strip()
+    if not url:
+        return ''
+    import re
+    url = re.sub(r':\[[^\]@]*\]@', '@', url)     # نائب «[YOUR-PASSWORD]» المنسوخ من Supabase
+    parts = urlsplit(url)
+    drop = {'pgbouncer', 'connection_limit', 'pool_timeout', 'schema'}
+    query = urlencode([(k, v) for k, v in parse_qsl(parts.query) if k.lower() not in drop])
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, ''))
 
-# قاعدة البيانات - SQLite للتطوير المحلي
-DATABASES = {
+
+_DATABASE_URL = _clean_database_url(os.environ.get('DATABASE_URL', ''))
+
+if _DATABASE_URL:
+    _db = dj_database_url.parse(
+        _DATABASE_URL,
+        conn_max_age=int(os.environ.get('DB_CONN_MAX_AGE', '60')),
+        conn_health_checks=True,       # يتحقق من الاتصال بعد استيقاظ الخادم من السكون
+        ssl_require=True,              # Supabase يتطلب SSL
+    )
+    _db_password = os.environ.get('DB_PASSWORD', '').strip()
+    if _db_password:
+        _db['PASSWORD'] = _db_password
+    if str(_db.get('PORT')) == '6543':
+        # Transaction Pooler: لا يدعم المؤشرات من جهة الخادم ولا الاتصالات الدائمة
+        _db['DISABLE_SERVER_SIDE_CURSORS'] = True
+        _db['CONN_MAX_AGE'] = 0
+    DATABASES = {'default': _db}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
+
+# ══════════════════════════════════════════════════════════════
+#  التخزين المؤقت داخل قاعدة البيانات (لا يضيع عند سكون الخادم)
+#  يُنشأ الجدول مرة واحدة بالأمر:  python manage.py createcachetable
+# ══════════════════════════════════════════════════════════════
+CACHES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'BACKEND': 'django.core.cache.backends.db.DatabaseCache',
+        'LOCATION': 'django_cache',
+        'TIMEOUT': 60 * 60 * 24,
+        'OPTIONS': {'MAX_ENTRIES': 5000},
     }
 }
+
 # ══════════════════════════════════════════════════════════════
 #  تلغرام  (نسخ احتياطي + سجل عمليات لوحة التحكم)
 # ══════════════════════════════════════════════════════════════
@@ -94,6 +135,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',   # تقديم الملفات الثابتة في الإنتاج
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.locale.LocaleMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -140,6 +182,11 @@ USE_TZ   = True
 STATIC_URL  = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_DIRS = [BASE_DIR / 'static'] if (BASE_DIR / 'static').exists() else []
+
+STORAGES = {
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedStaticFilesStorage'},
+}
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
