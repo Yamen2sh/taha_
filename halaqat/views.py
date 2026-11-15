@@ -1553,7 +1553,8 @@ def migrate_sqlite_to_postgres(request):
     mode = 'replace' if request.POST.get('mode') == 'replace' else 'merge'
     mode_label = 'استبدال كامل' if mode == 'replace' else 'دمج'
     try:
-        results = import_workbook(wb, mode=mode)
+        with transaction.atomic():
+            results = import_workbook(wb, mode=mode)
     except Exception as exc:
         err = f'❌ فشل الاستيراد — تم التراجع عن كل التغييرات:\n{exc}'
         _log_admin_action(request, f'❌ فشل استيراد Excel ({mode_label}): {exc}')
