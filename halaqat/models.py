@@ -316,3 +316,59 @@ class Sabr(models.Model):
 
     def __str__(self):
         return f'{self.student.name} — {self.date}'
+
+
+class Recitation(models.Model):
+    """
+    تسميع: مقطع من القرآن الكريم سمّعه الطالب في حلقته بتاريخ محدد.
+    النطاق من (سورة، آية) إلى (سورة، آية) — وقد يمتد عبر عدة سور.
+    تُحفظ الحلقة وقت التسميع، فلا يتغيّر سجل التسميع القديم إن انتقل الطالب لحلقة أخرى.
+    """
+
+    KIND_CHOICES = [
+        ('new', 'حفظ جديد'),
+        ('review', 'مراجعة'),
+    ]
+    GRADE_CHOICES = [
+        ('excellent', 'ممتاز'),
+        ('very_good', 'جيد جداً'),
+        ('good', 'جيد'),
+        ('acceptable', 'مقبول'),
+        ('repeat', 'يحتاج إعادة'),
+    ]
+
+    student = models.ForeignKey(
+        Student, verbose_name='الطالب',
+        on_delete=models.CASCADE, related_name='recitations',
+    )
+    circle = models.ForeignKey(
+        Circle, verbose_name='الحلقة',
+        on_delete=models.CASCADE, related_name='recitations',
+    )
+    date = models.DateField('تاريخ التسميع', default=timezone.localdate)
+    kind = models.CharField('النوع', max_length=10, choices=KIND_CHOICES, default='new')
+    from_surah = models.PositiveSmallIntegerField('من سورة')
+    from_ayah = models.PositiveSmallIntegerField('من آية')
+    to_surah = models.PositiveSmallIntegerField('إلى سورة')
+    to_ayah = models.PositiveSmallIntegerField('إلى آية')
+    grade = models.CharField('التقدير', max_length=12, choices=GRADE_CHOICES, blank=True, default='')
+    notes = models.CharField('ملاحظات', max_length=255, blank=True, default='')
+    created_at = models.DateTimeField('وقت التسجيل', auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'تسميع'
+        verbose_name_plural = 'التسميع'
+        ordering = ['-date', '-id']
+
+    def __str__(self):
+        return f'{self.student.name} — {self.range_display} — {self.date}'
+
+    @property
+    def range_display(self):
+        from .quran import format_range
+        return format_range(self.from_surah, self.from_ayah, self.to_surah, self.to_ayah)
+
+    @property
+    def ayah_count(self):
+        from .quran import safe_ayah_span
+        return safe_ayah_span(self.from_surah, self.from_ayah, self.to_surah, self.to_ayah)

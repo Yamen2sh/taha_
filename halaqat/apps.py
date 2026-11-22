@@ -5,3 +5,6 @@ class HalaqatConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'halaqat'
     verbose_name = 'إدارة الحلقات'
+
+    def ready(self):
+        from . import signals  # noqa: F401  — يربط إبطال الكاش بتعديلات البيانات

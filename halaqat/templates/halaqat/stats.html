@@ -34,7 +34,7 @@
       <option value="name" {% if sort == 'name' %}selected{% endif %}>أبجدياً</option>
       <option value="diff" {% if sort == 'diff' %}selected{% endif %}>الأفضل مقارنةً بحلقته</option>
       <option value="unrecorded" {% if sort == 'unrecorded' %}selected{% endif %}>الأكثر أياماً غير مسجّلة</option>
-      {% if sort == 'sabr' or sort == 'present' or sort == 'late' or sort == 'excused' %}<option value="{{ sort }}" selected>حسب العمود المختار</option>{% endif %}
+      {% if sort_custom %}<option value="{{ sort }}" selected>حسب العمود المختار</option>{% endif %}
     </select>
   </label>
   <label>العمر من
@@ -166,6 +166,23 @@
     const data = JSON.parse(document.getElementById(box.dataset.src).textContent);
     try { (box.dataset.chart === 'timeline' ? timeline : rates)(box, data); }
     catch (e) { box.textContent = 'تعذّر رسم المخطط'; }
+  });
+
+  // تبديل عرض جدول الأفراد: «حسب الأشهر» ⇄ «التفصيل» (يُحفظ الاختيار طوال الجلسة)
+  document.querySelectorAll('.st-views').forEach(box => {
+    const panel = box.closest('.panel');
+    const buttons = panel ? panel.querySelectorAll('[data-st-view]') : [];
+    if (!buttons.length) return;
+    const key = 'st-view-' + box.id;
+    const set = v => {
+      box.dataset.active = v;
+      buttons.forEach(b => b.classList.toggle('on', b.dataset.stView === v));
+      try { sessionStorage.setItem(key, v); } catch (e) { /* تجاهل */ }
+    };
+    buttons.forEach(b => b.addEventListener('click', () => set(b.dataset.stView)));
+    let saved = null;
+    try { saved = sessionStorage.getItem(key); } catch (e) { /* تجاهل */ }
+    if (saved === 'months' || saved === 'detail') set(saved);
   });
 })();
 </script>

@@ -7,7 +7,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#B17F4A">
   <link rel="icon" href="{% static 'halaqat/images/logo.svg' %}" type="image/svg+xml">
-  <link rel="stylesheet" href="{% static 'halaqat/css/style.css' %}?v=9">
+  <link rel="stylesheet" href="{% static 'halaqat/css/style.css' %}?v=10">
 </head>
 <body>
 <div class="arch-pattern"></div>
@@ -49,6 +49,7 @@
 
   {% block content %}{% endblock %}
 </div>
+{% block overlays %}{% endblock %}
 
 {% if user.is_authenticated %}
 <nav class="bottom-nav">
@@ -88,14 +89,15 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') toggleDrawer
   <div class="qs-box"><button class="qs-close" onclick="closeQuickStats()">✕</button><div id="qs-body"></div></div>
 </div>
 {% if user.is_authenticated %}<script src="{% static 'halaqat/js/student_index.js' %}?v=1"></script>
-<script src="{% static 'halaqat/js/ui.js' %}?v=2" defer></script>{% endif %}
+<script src="{% static 'halaqat/js/ui.js' %}?v=2" defer></script>
+<script src="{% static 'halaqat/js/export_image.js' %}?v=1" defer></script>{% endif %}
 <script>
 async function openQuickStats(id){
   const ov=document.getElementById('qs-overlay'), body=document.getElementById('qs-body');
   body.innerHTML='<p style="text-align:center;padding:24px">جاري التحميل…</p>'; ov.classList.add('open');
   try{
     const r=await fetch('/students/'+id+'/quick-stats/',{headers:{'X-Requested-With':'XMLHttpRequest'}});
-    if(!r.ok) throw 0; body.innerHTML=await r.text(); addHijriTitles(body);
+    if(!r.ok) throw 0; body.innerHTML=await r.text(); addHijriTitles(body); if(window.AttExport) AttExport.init(body);
   }catch(e){ body.innerHTML='<p style="text-align:center;padding:24px">❌ تعذّر التحميل</p>'; }
 }
 function closeQuickStats(){document.getElementById('qs-overlay').classList.remove('open');}

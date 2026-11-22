@@ -20,14 +20,17 @@
   حضور الدورات:  التاريخ | الدورة | النوع | الاسم | الحالة | معرّف الشخص | معرّف الدورة
   التفقد العام:  التاريخ | اسم الأستاذ | الحالة | معرّف الأستاذ
   السبر:         التاريخ | اسم الطالب | الحلقة | التفاصيل | معرّف الطالب
+  التسميع:       التاريخ | اسم الطالب | الحلقة | النوع | من سورة | من آية | إلى سورة | إلى آية | التقدير | ملاحظات
+                 | معرّف الطالب | معرّف الحلقة | رقم سورة البداية | رقم سورة النهاية
 """
 import datetime
 
 from django.db import connection, transaction
 
+from . import quran
 from .models import (
     Teacher, Circle, Student, Attendance, TeacherAttendance,
-    Course, CourseAttendance, CourseTeacherAttendance, TeacherDailyAttendance, Sabr,
+    Course, CourseAttendance, CourseTeacherAttendance, TeacherDailyAttendance, Sabr, Recitation,
 )
 
 _STATUS_MAP = {display: value for value, display in Attendance.STATUS_CHOICES}
@@ -93,6 +96,7 @@ def _reset_pg_sequences():
         'halaqat_teacher', 'halaqat_circle', 'halaqat_student', 'halaqat_attendance',
         'halaqat_teacherattendance', 'halaqat_course', 'halaqat_courseattendance',
         'halaqat_courseteacherattendance', 'halaqat_teacherdailyattendance', 'halaqat_sabr',
+        'halaqat_recitation',
     ]
     with connection.cursor() as cur:
         for t in tables:
@@ -121,6 +125,7 @@ def import_workbook(wb, mode='merge'):
             TeacherAttendance.objects.all().delete()
             Attendance.objects.all().delete()
             Sabr.objects.all().delete()
+            Recitation.objects.all().delete()
             Student.objects.all().delete()
             Circle.objects.all().delete()
             Teacher.objects.all().delete()
@@ -267,6 +272,36 @@ def import_workbook(wb, mode='merge'):
                 objs.append(Sabr(student=s, date=d, notes=_clean(_cell(row, 3))))
         Sabr.objects.bulk_create(objs)
         results.append(('السبر', len(objs)))
+
+        # ════════ التسميع ════════
+        kind_map = {display: value for value, display in Recitation.KIND_CHOICES}
+        grade_map = {display: value for value, display in Recitation.GRADE_CHOICES}
+        surah_no = {name: n for n, name, _ in quran.SURAHS}
+        rec_existing = set(Recitation.objects.values_list(
+            'student_id', 'date', 'from_surah', 'from_ayah', 'to_surah', 'to_ayah'))
+        rec_objs = []
+        for row in sheet('التسميع'):
+            d = _parse_date(_cell(row, 0))
+            circle = circle_ref(_xid(row, 11), _cell(row, 2))
+            s = student_ref(_xid(row, 10), _cell(row, 1), circle)
+            from_surah = _xid(row, 12) or surah_no.get(_clean(_cell(row, 4)))
+            to_surah = _xid(row, 13) or surah_no.get(_clean(_cell(row, 6)))
+            from_ayah, to_ayah = _xid(row, 5), _xid(row, 7)
+            if not (d and s and from_surah and to_surah and from_ayah and to_ayah):
+                continue
+            if quran.validate_range(from_surah, from_ayah, to_surah, to_ayah):
+                continue                                 # نطاق غير صحيح → يُتجاهل
+            key = (s.id, d, from_surah, from_ayah, to_surah, to_ayah)
+            if key in rec_existing:
+                continue
+            rec_existing.add(key)
+            rec_objs.append(Recitation(
+                student=s, circle=circle or s.circle, date=d,
+                kind=kind_map.get(_clean(_cell(row, 3)), 'new'),
+                from_surah=from_surah, from_ayah=from_ayah, to_surah=to_surah, to_ayah=to_ayah,
+                grade=grade_map.get(_clean(_cell(row, 8)), ''), notes=_clean(_cell(row, 9))[:255]))
+        Recitation.objects.bulk_create(rec_objs, batch_size=500)
+        results.append(('التسميع', len(rec_objs)))
 
         # ════════ حضور الحلقات ════════
         att_existing = set(Attendance.objects.values_list('student_id', 'date'))

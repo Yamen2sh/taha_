@@ -61,6 +61,33 @@
   <a href="{% url 'sabr_page' %}" class="btn-secondary" style="margin-top:10px;display:inline-block">📝 صفحة السبر</a>
 </div>
 
+<div class="panel" style="margin-bottom:16px;">
+  <h3>🎙 التسميع</h3>
+  <div class="stats-row" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));margin-bottom:10px">
+    <div class="stat-card"><div class="num">{{ recitation.count }}</div><div class="lbl">عدد مرات التسميع</div></div>
+    <div class="stat-card"><div class="num">{{ recitation.count_30 }}</div><div class="lbl">آخر 30 يوماً</div></div>
+    <div class="stat-card"><div class="num">{{ recitation.ayahs }}</div><div class="lbl">مجموع الآيات المُسمَّعة</div></div>
+    <div class="stat-card"><div class="num">{% if recitation.days_since_last is not None %}{{ recitation.days_since_last }}{% else %}—{% endif %}</div><div class="lbl">يوماً منذ آخر تسميع</div></div>
+  </div>
+  {% if recitation.items %}
+  <div class="table-scroll">
+    <table class="admin-table" data-pager="10">
+      <thead><tr><th>التاريخ</th><th>المقطع</th><th>النوع</th><th>التقدير</th><th>ملاحظات</th></tr></thead>
+      <tbody>
+        {% for x in recitation.items %}<tr>
+          <td style="white-space:nowrap">{{ x.date|date:"Y-m-d" }}</td>
+          <td>{{ x.range_display }} <span class="cmp-sub">({{ x.ayah_count }} آية)</span></td>
+          <td>{{ x.get_kind_display }}</td>
+          <td>{{ x.get_grade_display|default:"—" }}</td>
+          <td style="white-space:pre-wrap">{{ x.notes|default:"—" }}</td>
+        </tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<p style="font-size:13px;color:#9c8a71;margin:0">لا يوجد تسميع مسجّل بعد.</p>{% endif %}
+  {% if not is_viewer %}<a href="{% url 'recitation_page' %}?circle={{ student.circle_id }}" class="btn-secondary" style="margin-top:10px;display:inline-block">🎙 صفحة التسميع</a>{% endif %}
+</div>
+
 {% include "halaqat/_monthly_table.html" %}
 
 <div class="panel">

@@ -740,3 +740,154 @@ th.sortable[data-dir=desc]::after{content:' ▼';opacity:1}
 .admin-table thead th a{color:inherit;text-decoration:none;white-space:nowrap}
 .admin-table thead th a:hover{text-decoration:underline}
 .cmp-sub{font-size:10.5px;font-weight:400;color:#9c8a71;white-space:nowrap}
+
+/* ======================================================
+   تصدير صورة جدول الحضور (صفحة الطالب + النافذة السريعة)
+   ====================================================== */
+.att-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+.att-head h3{margin:0}
+.att-tools{display:flex;gap:6px;flex-wrap:wrap}
+.att-tools .qs-btn{margin:0;padding:5px 11px;font-weight:700}
+.att-tools .qs-btn[hidden]{display:none}
+.att-tools .qs-btn[data-busy]{opacity:.6;pointer-events:none}
+
+/* ======================================================
+   التسميع
+   ====================================================== */
+.rc-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-top:12px}
+.rc-datelbl{font-size:12px;color:#7a6a55;font-weight:600}
+.rc-today{font-size:12px;color:var(--primary-dark);background:var(--bg-alt);border-radius:8px;padding:6px 10px;text-decoration:none}
+.rc-link{font-size:12.5px;color:var(--primary-dark);text-decoration:none;background:var(--bg-alt);padding:7px 12px;border-radius:10px}
+.rc-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:1px solid var(--bg-alt);cursor:pointer;transition:background .15s}
+.rc-row:last-child{border-bottom:none}
+.rc-row:hover{background:var(--bg)}
+.rc-row.flash{animation:rcflash 1.6s ease}
+@keyframes rcflash{0%{background:#cfe8d5}100%{background:transparent}}
+.rc-main{display:flex;align-items:center;gap:10px;min-width:0;flex:1}
+.rc-info{min-width:0}
+.rc-name{font-weight:700;font-size:14px}
+.rc-last{font-size:12px;color:#7a6a55;margin-top:2px;line-height:1.7}
+.rc-last b{color:var(--primary-deep)}
+.rc-ago{color:#9c8a71;font-size:11px;margin-inline-start:4px}
+.rc-none{color:#b9a68c}
+.rc-day{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}
+.rc-day:empty{display:none}
+.rc-chip{background:var(--success-bg);color:#2f6b3f;border:1px solid #bcd9c3;border-radius:999px;padding:2px 10px;font-size:11.5px;font-weight:700}
+.rc-chip.review{background:var(--warning-bg);color:#8a6410;border-color:#ecd49b}
+.rc-add{flex-shrink:0;border:none;border-radius:10px;padding:9px 14px;background:linear-gradient(135deg,var(--primary),var(--primary-dark));color:#fff;font:inherit;font-weight:700;font-size:13px;cursor:pointer}
+
+.rc-overlay{position:fixed;inset:0;z-index:8000;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;overflow-y:auto}
+.rc-overlay[hidden]{display:none}
+.rc-sheet{background:var(--bg);width:100%;max-width:560px;max-height:94vh;overflow-y:auto;border-radius:20px 20px 0 0;padding:14px 14px 22px;box-shadow:0 -10px 40px -12px rgba(0,0,0,.4)}
+@media (min-width:700px){.rc-overlay{align-items:center;padding:20px}.rc-sheet{border-radius:18px;max-height:90vh}}
+body.rc-lock{overflow:hidden}
+.rc-sheet-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px}
+.rc-sheet-head .qs-close{margin:0}
+.rc-title{font-size:17px;font-weight:700;color:var(--primary-deep)}
+.rc-sub{font-size:12px;color:#9c8a71}
+.rc-form{display:flex;flex-direction:column;gap:10px}
+.rc-edit-banner{background:var(--warning-bg);border:1px solid #ecd49b;border-radius:10px;padding:8px 10px;font-size:12.5px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.rc-edit-banner[hidden]{display:none}
+.rc-seg,.rc-grades{display:flex;gap:4px;background:var(--bg-alt);padding:4px;border-radius:12px;flex-wrap:wrap}
+.rc-seg button,.rc-grades button{flex:1;min-width:max-content;border:none;background:transparent;border-radius:9px;padding:9px 8px;font:inherit;font-size:12.5px;font-weight:700;color:#9c8a71;cursor:pointer}
+.rc-seg button.on{background:var(--primary);color:#fff}
+.rc-grades button.on{background:var(--success);color:#fff}
+.rc-grades button[data-v="repeat"].on{background:var(--error)}
+.rc-grades button[data-v="acceptable"].on{background:var(--warning)}
+.rc-grades button[data-v=""].on{background:#9c8a71}
+.rc-point{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.rc-lbl{width:28px;font-size:12.5px;font-weight:700;color:#7a6a55}
+.rc-point select{flex:1 1 150px;min-width:0;padding:10px;border:1px solid var(--accent-light);border-radius:10px;background:#fff;font:inherit;font-size:14px;color:var(--ink)}
+.rc-point input{width:92px;padding:10px;border:1px solid var(--accent-light);border-radius:10px;background:#fff;font:inherit;font-size:15px;text-align:center;color:var(--ink)}
+.rc-max{font-size:11px;color:#9c8a71;min-width:64px}
+.rc-quick{display:flex;gap:6px;flex-wrap:wrap}
+.rc-quick .qs-btn{margin:0;padding:6px 12px}
+.rc-quick .qs-btn[hidden]{display:none}
+.rc-preview{min-height:22px;font-size:13px;color:#7a6a55}
+.rc-preview.ok{color:#2f6b3f}
+.rc-preview.bad{color:var(--error)}
+.rc-notes{padding:10px;border:1px solid var(--accent-light);border-radius:10px;font:inherit;font-size:14px;background:#fff;width:100%;color:var(--ink)}
+.rc-save-row{display:flex;gap:8px;align-items:center}
+.rc-save-row input[type=date]{padding:10px;border:1px solid var(--accent-light);border-radius:10px;font:inherit;background:#fff;color:var(--ink)}
+.rc-save-row .btn-primary{flex:1;width:auto}
+.rc-history-box{margin-top:16px;border-top:1px dashed var(--accent-light);padding-top:12px}
+.rc-history-box h4{font-size:13.5px;color:var(--primary-deep);margin-bottom:8px}
+.rc-history-box small{color:#9c8a71;font-weight:400}
+.rc-h{background:#fff;border:1px solid var(--accent-light);border-radius:12px;padding:10px 12px;margin-bottom:8px}
+.rc-h-main{font-size:14px}
+.rc-h-n{font-size:11px;color:#9c8a71}
+.rc-h-meta{font-size:11.5px;color:#7a6a55;margin-top:2px}
+.rc-h-notes{font-size:12px;color:#7a6a55;background:var(--bg);border-radius:8px;padding:5px 8px;margin-top:6px}
+.rc-h-actions{margin-top:6px;display:flex;gap:6px}
+.rc-h-actions .qs-btn{margin:0}
+.rc-empty{font-size:13px;color:#9c8a71;margin:0}
+
+/* ======================================================
+   فرز الطلاب بالسحب والإفلات (لوحة التحكم)
+   ====================================================== */
+.dn-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:10px}
+.dn-bar input[type=search]{flex:1;min-width:200px;max-width:340px;padding:9px 12px;border:1px solid var(--accent-light);border-radius:10px;font:inherit;font-size:14px;background:#fff;color:var(--ink)}
+.dn-bar .btn-secondary{width:auto;padding:9px 14px}
+.dn-bar .btn-secondary:disabled{opacity:.45;cursor:default}
+.dn-status{font-size:12.5px;color:#9c8a71;margin-inline-start:auto}
+.dn-hint{font-size:12.5px;color:#9c8a71;margin-bottom:12px;line-height:1.8}
+.dn-board{display:grid;grid-template-columns:repeat(auto-fill,minmax(236px,1fr));gap:12px;align-items:stretch}
+.dn-col{background:var(--white);border:1.5px solid var(--accent-light);border-radius:16px;box-shadow:var(--shadow);display:flex;flex-direction:column;min-height:200px;transition:border-color .12s,background .12s,box-shadow .12s,opacity .12s}
+.dn-col.is-over{border-color:var(--primary);background:#fff8ee;box-shadow:0 0 0 3px rgba(177,127,74,.28)}
+.dn-col.is-dim{opacity:.45}
+.dn-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:11px 12px 9px;border-bottom:1px solid var(--bg-alt);background:linear-gradient(180deg,var(--bg),#fff);border-radius:14px 14px 0 0}
+.dn-title{font-weight:700;font-size:14px;color:var(--primary-deep);line-height:1.3}
+.dn-teacher{font-size:11px;color:#9c8a71;margin-top:1px}
+.dn-count{min-width:28px;height:28px;border-radius:14px;background:var(--primary);color:#fff;font-weight:700;font-size:13px;display:flex;align-items:center;justify-content:center;padding:0 8px;flex-shrink:0}
+.dn-list{flex:1;padding:8px;display:flex;flex-direction:column;gap:6px;min-height:130px}
+.dn-card{display:flex;align-items:center;gap:6px;background:var(--bg);border:1px solid var(--accent-light);border-radius:10px;padding-inline:2px 10px;min-height:40px;font-size:13.5px;font-weight:600;color:var(--ink);cursor:grab;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;transition:background .12s,box-shadow .12s,opacity .12s}
+.dn-card:hover{background:#fff;box-shadow:0 2px 8px -3px rgba(74,52,32,.3)}
+.dn-grip{width:34px;align-self:stretch;display:flex;align-items:center;justify-content:center;color:#b9a68c;font-size:17px;touch-action:none;cursor:grab;flex-shrink:0}
+.dn-name{flex:1;line-height:1.3;overflow-wrap:anywhere}
+.dn-card.is-dragging{opacity:.3;border-style:dashed}
+.dn-card.is-saving{opacity:.55}
+.dn-card.is-hidden{display:none}
+.dn-card.is-hit{background:#fff3cf;border-color:var(--warning)}
+.dn-card.flash{animation:dnflash 1.4s ease}
+@keyframes dnflash{0%{background:#cfe8d5;border-color:var(--success)}100%{background:var(--bg)}}
+.dn-ghost{position:fixed;left:0;top:0;z-index:9999;pointer-events:none;margin:0;opacity:.96;transform-origin:top right;box-shadow:0 14px 30px -10px rgba(74,52,32,.55);border-color:var(--primary)!important;background:#fff!important;cursor:grabbing}
+body.dn-dragging{cursor:grabbing;user-select:none;-webkit-user-select:none}
+.dn-empty{display:none;margin:auto;color:#b9a68c;font-size:12.5px;text-align:center;padding:18px 6px;border:2px dashed var(--accent-light);border-radius:10px;width:100%}
+.dn-col:not(.has-cards) .dn-empty{display:block}
+.dn-rotate{display:none;background:var(--warning-bg);border:1px solid var(--warning);border-radius:12px;padding:16px;font-size:14px;line-height:1.9;text-align:center;margin-bottom:12px}
+@media (max-width:719px) and (orientation:portrait){
+  .dn-board,.dn-bar,.dn-hint{display:none}
+  .dn-rotate{display:block}
+}
+/* شاشة عرضية قصيرة (هاتف أفقي): اختصر الترويسة ليتّسع المجال للحاويات */
+@media (orientation:landscape) and (max-height:520px){
+  .dn-pageheader{margin-bottom:6px}
+  .dn-pageheader h2{font-size:16px}
+  .dn-pageheader .desc,.dn-hint{display:none}
+  .dn-bar{margin-bottom:8px}
+  .dn-bar input[type=search],.dn-bar .btn-secondary{padding:6px 10px;font-size:13px}
+  .dn-board{grid-template-columns:repeat(auto-fill,minmax(196px,1fr));gap:8px}
+  .dn-col{min-height:140px}
+  .dn-list{min-height:80px;padding:6px;gap:5px}
+  .dn-card{min-height:38px;font-size:13px}
+  .back-link{margin-bottom:6px}
+}
+
+/* ======================================================
+   جدول الأفراد «حسب الأشهر» في صفحة الإحصائيات
+   ====================================================== */
+.view-switch{display:inline-flex;background:var(--bg-alt);padding:3px;border-radius:10px;gap:2px;margin-bottom:10px}
+.view-switch button{border:none;background:transparent;padding:6px 14px;border-radius:8px;font:inherit;font-size:12.5px;font-weight:700;color:#9c8a71;cursor:pointer}
+.view-switch button.on{background:var(--primary);color:#fff}
+.st-views[data-active="months"] > [data-view="detail"],
+.st-views[data-active="detail"] > [data-view="months"]{display:none}
+.st-mt{min-width:0}
+.st-mt th,.st-mt td{white-space:nowrap;text-align:center}
+.st-mt th:first-child,.st-mt td:first-child{text-align:right}
+.st-mt td.st-none{color:#c9bfae}
+.st-mt th:first-child,.st-mt td:first-child{position:sticky;right:0;z-index:1;box-shadow:-8px 0 8px -8px rgba(74,52,32,.35)}
+.st-mt td:first-child{background:var(--white)}
+.st-mt thead th:first-child{background:var(--bg-alt)}
+.st-mt tfoot td{font-weight:800;background:var(--bg-alt);border-top:2px solid var(--accent-light)}
+.st-mt tfoot td:first-child{background:var(--bg-alt)}
+.st-mt thead th a{display:inline-block}

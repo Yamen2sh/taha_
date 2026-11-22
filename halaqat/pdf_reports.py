@@ -251,6 +251,43 @@ def _p(v):
     return f'{v}%'
 
 
+def _short_month(col):
+    """«أكتوبر 26» بدل «أكتوبر 2026» لتتّسع ترويسة العمود."""
+    y, m = col['key'].split('-')
+    return f'{MONTHS_AR[int(m) - 1]} {y[2:]}'
+
+
+def _monthly_people_section(kind, st):
+    """
+    «متوسط الحضور حسب الأشهر» لكل فرد: المتوسط الكامل ثم عمود لكل شهر ميلادي.
+    تُقسَّم الأشهر على جداول متتابعة (5 أشهر لكل جدول) كي تبقى الأعمدة مقروءة على صفحة A4 طولية.
+    """
+    cols = st.get('month_cols') or []
+    people = st.get('people') or []
+    if not cols or not people:
+        return []
+    avg_months = (st.get('people_avg') or {}).get('months') or []
+    avg_rate = (st.get('people_avg') or {}).get('rate')
+    students = kind == 'students'
+    out = [_line('متوسط حضور الطلاب حسب الأشهر (الكامل = متوسط الفترة كلها)' if students
+                 else 'متوسط حضور الكادر حسب الأشهر (الكامل = متوسط الفترة كلها)', 10.5, keep=True)]
+    step, mw = 5, 53
+    for i in range(0, len(cols), step):
+        idx = list(range(i, min(i + step, len(cols))))
+        header = (['الطالب', 'الحلقة'] if students else ['الاسم']) + ['الكامل'] + [_short_month(cols[j]) for j in idx]
+        rows = []
+        for p in people:
+            months = p.get('months') or []
+            cells = [(_pct(months[j]['rate']) if j < len(months) and months[j] else '—') for j in idx]
+            rows.append([p['name']] + ([p['sub']] if students else []) + [_pct(p['rate'])] + cells)
+        rows.append(['متوسط الكل'] + (['—'] if students else []) + [_pct(avg_rate)] +
+                    [_pct(avg_months[j]) if j < len(avg_months) else '—' for j in idx])
+        widths = ([112, 80, 58] if students else [150, 58]) + [mw] * len(idx)
+        out.append(_rtl_table(header, rows, widths, name_cols=(0, 1) if students else (0,), size=8.5))
+        out.append(Spacer(1, 8))
+    return out
+
+
 def _population_section(kind, title, st):
     """kind: 'students' | 'staff' — كل القيم نسب مئوية من مجموع السجلات."""
     out = [_heading(title, 14)]
@@ -295,6 +332,8 @@ def _population_section(kind, title, st):
          for r in st['sources']],
         [195, 70, 62, 62, 62, 64], header_colors={2: C_PRESENT, 3: C_LATE, 4: C_ABSENT, 5: C_EXCUSED}))
     out.append(Spacer(1, 10))
+
+    out.extend(_monthly_people_section(kind, st))
 
     if kind == 'students':
         out.append(_line(f'سجل الطلاب ({st["people_total"]} طالب)', 10.5, keep=True))

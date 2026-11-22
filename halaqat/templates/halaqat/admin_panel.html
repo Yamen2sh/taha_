@@ -123,7 +123,7 @@
         <tr>
           <td>{{ circle.name }}</td>
           <td>{% if circle.teacher %}<a href="{% url 'teacher_profile' circle.teacher.id %}" class="student-link">{{ circle.teacher.name }}</a>{% else %}—{% endif %}</td>
-          <td>{{ circle.student_count }}</td>
+          <td>{{ circle.students }}</td>
           <td><a href="{% url 'edit_circle' circle.id %}" class="edit-link">✏️ تعديل</a></td>
           <td>
             <form method="post" action="{% url 'delete_circle' circle.id %}"
@@ -180,6 +180,19 @@
   </div>
 </div>
 </section>
+<section class="subpane" data-tab="sort" data-title="🔀 فرز الطلاب">
+<div class="panel">
+    <h3>🔀 فرز الطلاب بين الحلقات</h3>
+    <div class="panel-body">
+      <p style="font-size:13px;color:#7a6a55;line-height:1.9;margin:0 0 14px">
+        لوحة تُعرض فيها <b>كل الحلقات كحاويات كبيرة</b>؛ اسحب بطاقة الطالب وأفلتها في حلقة أخرى فيُحفظ النقل فوراً،
+        ويمكن التراجع عن آخر النقلات. تعمل على <b>الشاشة العرضية</b> أو شاشة الحاسب الكاملة.
+      </p>
+      <a href="{% url 'sort_students' %}" class="btn-primary" style="text-decoration:none;display:block;text-align:center">🔀 فتح لوحة الفرز</a>
+    </div>
+</div>
+</section>
+
 <section class="subpane" data-tab="courses" data-title="🎓 الدورات">
 <div class="panel">
   <h3>🎓 الدورات والدروس الإضافية الحالية</h3>

@@ -58,4 +58,16 @@ urlpatterns = [
 
     # ── صفحة المطور ──
     path('developer/', views.developer_page, name='developer_page'),
+    path('developer/cache/refresh/', views.developer_cache_refresh, name='developer_cache_refresh'),
+
+    # ── فرز الطلاب بالسحب والإفلات (لوحة التحكم) ──
+    path('admin-panel/sort-students/', views.sort_students_page, name='sort_students'),
+    path('admin-panel/sort-students/move/', views.sort_students_move, name='sort_students_move'),
+
+    # ── التسميع (القرآن الكريم) حلقةً حلقة ──
+    path('recitation/', views.recitation_page, name='recitation_page'),
+    path('recitation/student/<int:student_id>/', views.recitation_student_info, name='recitation_student_info'),
+    path('recitation/student/<int:student_id>/add/', views.recitation_add, name='recitation_add'),
+    path('recitation/<int:rec_id>/update/', views.recitation_update, name='recitation_update'),
+    path('recitation/<int:rec_id>/delete/', views.recitation_delete, name='recitation_delete'),
 ]

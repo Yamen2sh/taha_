@@ -86,7 +86,15 @@
       {% if q %}<a href="?{{ keep_qs_noq }}" class="btn-secondary" style="padding:8px 12px">✕</a>{% endif %}
     </form>
     {% endif %}
-    <div class="table-scroll" id="{{ kind }}-table">
+    {% if st.month_cols %}
+    <div class="view-switch" role="tablist" aria-label="طريقة عرض الجدول">
+      <button type="button" data-st-view="months" class="on">📅 حسب الأشهر</button>
+      <button type="button" data-st-view="detail">📋 التفصيل</button>
+    </div>
+    {% endif %}
+    <div class="st-views" id="{{ kind }}-table" data-active="{% if st.month_cols %}months{% else %}detail{% endif %}">
+      <div data-view="detail">
+        <div class="table-scroll">
       <table class="admin-table"{% if kind != "students" %} data-pager="20" data-sortable{% endif %}>
         <thead><tr>
           {% if kind == "students" %}
@@ -123,6 +131,47 @@
           {% endfor %}
         </tbody>
       </table>
+        </div>
+      </div>
+      {% if st.month_cols %}
+      <div data-view="months">
+        <p class="chart-note" style="margin:0 0 8px">متوسط نسبة الحضور لكل شهر ميلادي على حدة، بجانب المتوسط الكامل للفترة. مرّر المؤشر على أي خانة لرؤية تفاصيلها{% if kind == "students" %}، واضغط عنوان أي شهر لفرز الطلاب به{% endif %}.</p>
+        <div class="table-scroll">
+      <table class="admin-table st-mt"{% if kind != "students" %} data-pager="20" data-sortable{% endif %}>
+        <thead><tr>
+          {% if kind == "students" %}
+          <th><a href="{{ sort_links.name.url }}">اسم الطالب{{ sort_links.name.arrow }}</a></th>
+          <th><a href="{{ sort_links.circle.url }}">الحلقة{{ sort_links.circle.arrow }}</a></th>
+          <th><a href="{{ sort_links.rate.url }}">المتوسط الكامل{{ sort_links.rate.arrow }}</a></th>
+          {% for c in st.month_cols %}<th><a href="{{ c.url }}">متوسط {{ c.label }}{{ c.arrow }}</a></th>{% endfor %}
+          {% else %}
+          <th data-sort>الاسم</th><th data-sort>المتوسط الكامل</th>
+          {% for c in st.month_cols %}<th data-sort>متوسط {{ c.label }}</th>{% endfor %}
+          {% endif %}
+        </tr></thead>
+        <tbody>
+          {% for p in st.people %}
+          <tr>
+            <td data-v="{{ p.name }}">{% if kind == "students" %}<a href="{% url 'student_profile' p.id %}" class="student-link">{{ p.name }}</a>{% else %}<a href="{% url 'teacher_profile' p.id %}" class="student-link">{{ p.name }}</a>{% endif %}</td>
+            {% if kind == "students" %}<td data-v="{{ p.sub }}">{{ p.sub|default:"—" }}</td>{% endif %}
+            <td data-v="{{ p.rate|default_if_none:'' }}" class="{% if p.rate is None %}{% elif p.rate >= 85 %}rate-good{% elif p.rate >= 65 %}rate-mid{% else %}rate-bad{% endif %}">{% if p.rate is not None %}{{ p.rate }}%{% else %}—{% endif %}
+              <div class="cmp-sub">{{ p.total }} من {{ p.expected }}</div></td>
+            {% for c in p.months %}{% if c %}<td data-v="{{ c.rate|default_if_none:'' }}" class="{% if c.rate is None %}{% elif c.rate >= 85 %}rate-good{% elif c.rate >= 65 %}rate-mid{% else %}rate-bad{% endif %}" title="حاضر {{ c.present }} · تأخر {{ c.late }} · غائب {{ c.absent }} · إذن {{ c.excused }} · لم يُسجَّل {{ c.unrecorded }}">{% if c.rate is not None %}{{ c.rate }}%{% else %}—{% endif %}
+              <div class="cmp-sub">{{ c.recorded }} من {{ c.expected }}</div></td>{% else %}<td data-v="" class="st-none">—</td>{% endif %}{% endfor %}
+          </tr>
+          {% empty %}<tr><td colspan="{% if kind == 'students' %}{{ st.month_cols|length|add:3 }}{% else %}{{ st.month_cols|length|add:2 }}{% endif %}" style="text-align:center;color:#9c8a71">لا نتائج</td></tr>
+          {% endfor %}
+        </tbody>
+        <tfoot><tr class="total">
+          <td>متوسط الكل{% if kind == "students" %} ({{ st.people_total }}){% endif %}</td>
+          {% if kind == "students" %}<td>—</td>{% endif %}
+          <td>{% if st.people_avg.rate is not None %}{{ st.people_avg.rate }}%{% else %}—{% endif %}</td>
+          {% for a in st.people_avg.months %}<td>{% if a is not None %}{{ a }}%{% else %}—{% endif %}</td>{% endfor %}
+        </tr></tfoot>
+      </table>
+        </div>
+      </div>
+      {% endif %}
     </div>
     {% if kind == "students" and st.pages > 1 %}
     <div class="tbl-pager">

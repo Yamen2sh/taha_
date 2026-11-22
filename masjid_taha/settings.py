@@ -102,7 +102,15 @@ CACHES = {
         'LOCATION': 'django_cache',
         'TIMEOUT': 60 * 60 * 24,
         'OPTIONS': {'MAX_ENTRIES': 5000},
-    }
+    },
+    # كاش في ذاكرة التطبيق نفسه (بلا أي استعلام): يُملأ مسبقاً عند التشغيل وتُبطله signals عند التعديل.
+    # انظر halaqat/cache_utils.py — يُنصح بتشغيل gunicorn بعملية واحدة: --workers 1 --threads 4
+    'memory': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'taha-memory',
+        'TIMEOUT': 60 * 15,
+        'OPTIONS': {'MAX_ENTRIES': 300},
+    },
 }
 
 # ══════════════════════════════════════════════════════════════
@@ -143,6 +151,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'halaqat.roles.ViewerAccessMiddleware',   # حساب «مشاهد»: الإحصائيات والسبر فقط
+    'halaqat.cache_utils.WarmupMiddleware',   # احتياط للتحميل المسبق للكاش (انظر cache_utils)
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 

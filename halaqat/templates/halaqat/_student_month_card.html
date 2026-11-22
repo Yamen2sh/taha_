@@ -1,5 +1,12 @@
-<div class="card att-card">
-  <h3>الحضور — آخر 4 أسابيع{% if quick %} · {{ student.name }}{% endif %}</h3>
+<div class="card att-card" data-att-card data-student="{{ student.name }}" data-circle="{{ student.circle.name }}"
+     data-start="{{ month.start|date:'Y-m-d' }}" data-end="{{ month.end|date:'Y-m-d' }}">
+  <div class="att-head">
+    <h3>الحضور — آخر 4 أسابيع{% if quick %} · {{ student.name }}{% endif %}</h3>
+    <div class="att-tools">
+      <button type="button" class="qs-btn" data-export-image title="حفظ جدول الحضور كصورة PNG">📷 تصدير صورة</button>
+      <button type="button" class="qs-btn" data-share-image hidden title="مشاركة الصورة (واتساب وغيره)">📤 مشاركة</button>
+    </div>
+  </div>
   <div class="att-legend">
     <span><i class="s-present"></i> حاضر</span>
     <span><i class="s-late"></i> تأخر</span>

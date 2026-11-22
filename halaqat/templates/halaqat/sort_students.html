@@ -1,0 +1,52 @@
+{% extends "halaqat/base.html" %}
+{% load static %}
+{% block title %}فرز الطلاب — مسجد طه{% endblock %}
+{% block content %}
+<style>.page-wrap{max-width:none}</style>
+
+<a href="{% url 'admin_panel' %}#sort" class="back-link">→ رجوع للوحة التحكم</a>
+
+<div class="page-header dn-pageheader">
+  <h2>🔀 فرز الطلاب بين الحلقات</h2>
+  <div class="desc">كل حلقة حاوية — اسحب بطاقة الطالب وأفلتها في حلقة أخرى فيُحفظ النقل فوراً.</div>
+</div>
+
+<div class="dn-rotate">
+  📱 هذه الصفحة تعمل على <b>الشاشة العرضية</b> أو شاشة الحاسب.<br>
+  اقلب الهاتف إلى الوضع الأفقي، أو افتح الصفحة من الحاسب.
+</div>
+
+<div class="dn-bar">
+  <input type="search" id="dn-find" placeholder="🔍 ابحث عن طالب…" autocomplete="off">
+  <button type="button" class="btn-secondary" id="dn-undo" disabled>↩ تراجع عن آخر نقل</button>
+  <span class="dn-status" id="dn-status" data-default="{{ total_students }} طالب في {{ boards|length }} حلقة">{{ total_students }} طالب في {{ boards|length }} حلقة</span>
+</div>
+<div class="dn-hint">
+  بالماوس: اسحب البطاقة من أي مكان. باللمس: اسحب من المقبض <b>⠿</b>، أو اضغط على البطاقة ضغطة مطوّلة ثم اسحب.
+  أي نقل يمكن التراجع عنه (Ctrl+Z). سجلات الحضور السابقة للطالب تبقى كما هي في حلقته القديمة.
+</div>
+
+<div class="dn-board" id="dn-board" data-move-url="{% url 'sort_students_move' %}">
+  {% for b in boards %}
+  <section class="dn-col{% if b.students %} has-cards{% endif %}" data-circle="{{ b.circle.id }}" data-name="{{ b.circle.name }}">
+    <header class="dn-head">
+      <div>
+        <div class="dn-title">{{ b.circle.name }}</div>
+        <div class="dn-teacher">{% if b.circle.teacher %}{{ b.circle.teacher.name }}{% else %}بلا أستاذ{% endif %}</div>
+      </div>
+      <span class="dn-count" data-count>{{ b.students|length }}</span>
+    </header>
+    <div class="dn-list" data-list>
+      {% for s in b.students %}
+      <div class="dn-card" data-student="{{ s.id }}" data-name="{{ s.name }}"><span class="dn-grip" aria-hidden="true">⠿</span><span class="dn-name">{{ s.name }}</span></div>
+      {% endfor %}
+      <div class="dn-empty">اسحب طلاباً إلى هنا</div>
+    </div>
+  </section>
+  {% empty %}
+  <div class="empty-state">لا توجد حلقات بعد.</div>
+  {% endfor %}
+</div>
+
+<script src="{% static 'halaqat/js/sort_students.js' %}?v=1"></script>
+{% endblock %}

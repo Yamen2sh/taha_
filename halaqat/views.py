@@ -1,6 +1,7 @@
 import csv
 import datetime
 import io
+import re
 from random import randint
 import threading
 import time
@@ -16,9 +17,10 @@ from django.utils import timezone
 from django.db import transaction
 from django.views.decorators.http import require_POST
 
+from . import cache_utils, quran
 from .models import (
     Teacher, Circle, Student, Attendance, TeacherAttendance,
-    Course, CourseAttendance, CourseTeacherAttendance, TeacherDailyAttendance, Sabr,
+    Course, CourseAttendance, CourseTeacherAttendance, TeacherDailyAttendance, Sabr, Recitation,
 )
 from .forms import CircleForm, StudentForm, CourseForm, WhatsAppAbsentForm, ViewerAccountForm
 from .roles import VIEWER_GROUP, is_viewer
@@ -36,7 +38,7 @@ def home(request):
     from django.db.models import Count
     selected_date = _parse_date_param(request)
 
-    circles = list(Circle.objects.select_related('teacher').annotate(n=Count('students')).order_by('display_order', 'name', 'id'))
+    circles = cache_utils.circles()          # من الكاش: الحلقات + الأستاذ + عدد الطلاب
     rec_by_circle = Counter(dict(
         Attendance.objects.filter(date=selected_date).values('circle_id').annotate(c=Count('id')).values_list('circle_id', 'c')
     ))
@@ -48,20 +50,21 @@ def home(request):
 
     circle_rows, done_circles = [], 0
     for c in circles:
-        recorded = rec_by_circle.get(c.id, 0)
-        t_ok = (c.teacher_id, c.id) in teacher_done if c.teacher_id else None
-        complete = c.n > 0 and recorded >= c.n and t_ok is not False
+        recorded = rec_by_circle.get(c['id'], 0)
+        teacher_id = c['teacher']['id'] if c['teacher'] else None
+        t_ok = (teacher_id, c['id']) in teacher_done if teacher_id else None
+        complete = c['students'] > 0 and recorded >= c['students'] and t_ok is not False
         if complete:
             done_circles += 1
         circle_rows.append({
-            'circle': c, 'students': c.n, 'recorded': recorded, 'teacher_ok': t_ok,
+            'circle': c, 'students': c['students'], 'recorded': recorded, 'teacher_ok': t_ok,
             'state': 'ok' if complete else ('part' if recorded or t_ok else 'no'),
         })
 
     # الأساتذة غير المرتبطين بحلقة/دورة → التفقد العام
-    free_teachers = list(Teacher.objects.filter(circles__isnull=True, courses__isnull=True).distinct().order_by('name'))
+    free_teachers = cache_utils.free_teachers()
     general_done = set(TeacherDailyAttendance.objects.filter(date=selected_date).values_list('teacher_id', flat=True))
-    teacher_rows = [{'teacher': t, 'ok': t.id in general_done} for t in free_teachers]
+    teacher_rows = [{'teacher': t, 'ok': t['id'] in general_done} for t in free_teachers]
 
     # الدورات: تُعرض فقط إن سُجّل فيها شيء في ذلك اليوم (لا جدول ثابت للدورات)
     course_rows = []
@@ -73,7 +76,7 @@ def home(request):
             course_rows.append({'course': co, 'students': co.n, 'recorded': course_rec[co.id],
                                 'state': 'ok' if course_rec[co.id] >= co.n else 'part'})
 
-    total_students = sum(c.n for c in circles)
+    total_students = sum(c['students'] for c in circles)
     total_recorded = sum(rec_by_circle.values())
     circle_teachers = [r for r in circle_rows if r['teacher_ok'] is not None]
     context = {
@@ -105,40 +108,55 @@ def help_page(request):
 
 @login_required
 def circles_list(request):
-    circles = Circle.objects.select_related('teacher').order_by('display_order', 'name', 'id')
+    """بطاقات الحلقات: البيانات الثابتة من الكاش + استعلامان مجمّعان فقط لحضور اليوم."""
+    from collections import Counter
+    from django.db.models import Count
+    circles = cache_utils.circles()
     today = timezone.now().date()
+
+    by_circle = {}
+    for row in (Attendance.objects.filter(date=today)
+                .values('circle_id', 'status').annotate(c=Count('id'))):
+        by_circle.setdefault(row['circle_id'], Counter())[row['status']] += row['c']
+    teacher_done = set(TeacherAttendance.objects.filter(date=today).values_list('teacher_id', 'circle_id'))
 
     circle_cards = []
     for circle in circles:
-        total_students = circle.student_count
-        today_records = Attendance.objects.filter(circle=circle, date=today)
-        present_today = today_records.filter(status__in=['present', 'late']).count()
+        cnt = by_circle.get(circle['id'], Counter())
+        recorded_students = sum(cnt.values())
+        present_today = cnt['present'] + cnt['late']
+        counted = recorded_students - cnt['excused']
         rate = None
-        if today_records.exists():
-            counted = today_records.exclude(status='excused').count()
-            rate = round((present_today / counted) * 100) if counted else None
+        if recorded_students and counted:
+            rate = round((present_today / counted) * 100)
 
-        progress = circle.attendance_progress(today)
-        if progress['total'] == 0:
+        # اكتمال التسجيل: كل الطلاب + الأستاذ (إن وُجد)
+        total = circle['students']
+        recorded = recorded_students
+        if circle['teacher']:
+            total += 1
+            if (circle['teacher']['id'], circle['id']) in teacher_done:
+                recorded += 1
+        if total == 0:
             card_status = 'empty'
-        elif progress['complete']:
+        elif recorded >= total:
             card_status = 'complete'
         else:
             card_status = 'incomplete'
 
         circle_cards.append({
             'circle': circle,
-            'student_count': total_students,
+            'student_count': circle['students'],
             'today_rate': rate,
             'card_status': card_status,
-            'progress_total': progress['total'],
-            'progress_recorded': progress['recorded'],
+            'progress_total': total,
+            'progress_recorded': recorded,
         })
 
     context = {
         'circle_cards': circle_cards,
-        'total_circles': circles.count(),
-        'total_students': Student.objects.count(),
+        'total_circles': len(circles),
+        'total_students': sum(c['students'] for c in circles),
         'today': today,
         'active_nav': 'circles',
     }
@@ -231,8 +249,8 @@ def circle_detail(request, circle_id):
         teacher_status = ta.status if ta else ''
 
     # للتنقل بين الحلقات دون الخروج من الصفحة (أزرار سابق/تالي + قائمة منسدلة)
-    all_circles = list(Circle.objects.order_by('display_order', 'name', 'id'))
-    ids = [c.id for c in all_circles]
+    all_circles = cache_utils.circles()
+    ids = [c['id'] for c in all_circles]
     idx = ids.index(circle.id) if circle.id in ids else None
     prev_circle = all_circles[idx - 1] if idx is not None and idx > 0 else None
     next_circle = all_circles[idx + 1] if idx is not None and idx < len(all_circles) - 1 else None
@@ -493,29 +511,24 @@ def delete_course(request, pk):
 def teachers_list(request):
     """تعرض الأساتذة غير المرتبطين فقط، مع إمكانية تسجيل تفقد عام لمن لم يُؤخذ له حضور اليوم."""
     selected_date = _parse_date_param(request)
-    teachers = (
-        Teacher.objects.prefetch_related('circles', 'courses')
-        .filter(circles__isnull=True, courses__isnull=True)
-        .distinct()
-        .order_by('name')
-    )
+    teachers = cache_utils.free_teachers()                 # من الكاش
+    general = dict(TeacherDailyAttendance.objects.filter(
+        date=selected_date, teacher_id__in=[t['id'] for t in teachers],
+    ).values_list('teacher_id', 'status'))                 # استعلام واحد لكل الأساتذة
 
     rows = []
     for teacher in teachers:
-        general_record = TeacherDailyAttendance.objects.filter(teacher=teacher, date=selected_date).first()
-        effective_status = general_record.status if general_record else ''
-
         rows.append({
             'teacher': teacher,
-            'general_status': effective_status,
+            'general_status': general.get(teacher['id'], ''),
             'context_notes': [],
-            'has_any_record': bool(general_record),
+            'has_any_record': teacher['id'] in general,
         })
 
     context = {
         'rows': rows,
         'selected_date': selected_date,
-        'total_teachers': teachers.count(),
+        'total_teachers': len(teachers),
         'unrecorded_count': sum(1 for r in rows if not r['has_any_record']),
         'active_nav': 'teachers',
     }
@@ -696,7 +709,7 @@ def admin_panel(request):
         'whatsapp_form': whatsapp_form,
         'viewer_form': viewer_form,
         'viewers': _viewer_users(),
-        'circles': Circle.objects.select_related('teacher').order_by('display_order', 'name', 'id'),
+        'circles': cache_utils.circles(),            # من الكاش (مع أعداد الطلاب)
         'students': Student.objects.select_related('circle').all(),
         'courses': Course.objects.prefetch_related('teachers', 'students').all(),
         'active_nav': 'admin',
@@ -856,24 +869,20 @@ def absentees_list(request):
 
 @login_required
 def search_students(request):
-    """بحث فوري عن طالب بالاسم عبر AJAX، يعيد اسمه واسم حلقته لتحويله إليها مباشرة."""
+    """بحث عن طالب بالاسم، يعيد اسمه واسم حلقته (من فهرس الكاش، بلا استعلام)."""
     query = request.GET.get('q', '').strip()
     results = []
     if query:
-        students = (
-            Student.objects.select_related('circle')
-            .filter(name__icontains=query)
-            .order_by('name')[:15]
-        )
-        results = [
-            {
-                'id': s.id,
-                'name': s.name,
-                'circle_id': s.circle_id,
-                'circle_name': s.circle.name,
-            }
-            for s in students
-        ]
+        nq = _norm_ar(query)
+        words = nq.split(' ')
+        hits = []
+        for sid, name, circle_id, circle_name in cache_utils.students_index()['rows']:
+            n = _norm_ar(name)
+            if all(w in n for w in words):
+                hits.append((not n.startswith(nq), name, sid, circle_id, circle_name))
+        hits.sort()
+        results = [{'id': sid, 'name': name, 'circle_id': cid, 'circle_name': cname}
+                   for _, name, sid, cid, cname in hits[:15]]
     return JsonResponse({'results': results})
 
 
@@ -883,20 +892,14 @@ def students_index(request):
     قائمة كل الطلاب (معرّف، اسم، حلقة) ليُخزّنها المتصفح محلياً (localStorage)
     فيتم البحث بالكامل داخل المتصفح بدل إرسال طلب للسيرفر مع كل حرف.
     ?v=<نسخة> : إن طابقت النسخة الحالية يُعاد {"same": true} فقط لتوفير البيانات.
+    تُقرأ القائمة من كاش الذاكرة (لا استعلام لقاعدة البيانات)، وتُبطَل عند أي تعديل على الطلاب.
     """
-    import hashlib
-    import json
-    rows = list(
-        Student.objects.select_related('circle')
-        .order_by('name')
-        .values_list('id', 'name', 'circle_id', 'circle__name')
-    )
-    payload = json.dumps(rows, ensure_ascii=False, separators=(',', ':'))
-    version = hashlib.sha1(payload.encode('utf-8')).hexdigest()[:16]
+    data = cache_utils.students_index()
+    version = data['v']
     if request.GET.get('v') == version:
         return JsonResponse({'same': True, 'v': version})
     resp = HttpResponse(
-        '{"v":"%s","students":%s}' % (version, payload),
+        '{"v":"%s","students":%s}' % (version, data['payload']),
         content_type='application/json; charset=utf-8',
     )
     resp['Cache-Control'] = 'private, no-cache'
@@ -970,6 +973,7 @@ def student_profile(request, student_id):
         'month': _student_month_grid(student),
         'last_sabr': student.sabrs.first(),
         'sabr': _student_sabr_stats(student),
+        'recitation': _student_recitation_stats(student),
         'active_nav': None,
     }
     return render(request, 'halaqat/student_profile.html', context)
@@ -1031,6 +1035,21 @@ def _student_sabr_stats(student):
         'count': len(items),
         'count_90': sum(1 for x in items if x.date >= since),
         'avg_gap': round(sum(gaps) / len(gaps)) if gaps else None,
+        'days_since_last': (today - items[0].date).days if items else None,
+    }
+
+
+def _student_recitation_stats(student):
+    """ملخص تسميع الطالب: عدد المرات، مجموع الآيات، آخر تسميع، والسجل الأخير."""
+    today = timezone.localdate()
+    since = today - datetime.timedelta(days=30)
+    rows = list(student.recitations.values_list('from_surah', 'from_ayah', 'to_surah', 'to_ayah', 'date'))
+    items = list(student.recitations.all()[:30])
+    return {
+        'items': items,
+        'count': len(rows),
+        'count_30': sum(1 for r in rows if r[4] >= since),
+        'ayahs': sum(quran.safe_ayah_span(*r[:4]) for r in rows),
         'days_since_last': (today - items[0].date).days if items else None,
     }
 
@@ -1322,6 +1341,19 @@ def send_all_data_telegram(request):
     for sb in Sabr.objects.select_related('student', 'student__circle').order_by('-date', 'student__name'):
         ws_sabr.append([sb.date.isoformat(), sb.student.name, sb.student.circle.name, sb.notes or '', sb.student_id])
 
+    # ── ورقة 8: التسميع (الأعمدة M و N = أرقام السور لإعادة استيراد دقيقة) ──────────
+    ws_rec = wb.create_sheet('التسميع')
+    _style_sheet(ws_rec,
+                 ['التاريخ', 'اسم الطالب', 'الحلقة', 'النوع', 'من سورة', 'من آية', 'إلى سورة', 'إلى آية',
+                  'التقدير', 'ملاحظات', 'معرّف الطالب', 'معرّف الحلقة', 'رقم سورة البداية', 'رقم سورة النهاية'],
+                 [14, 30, 28, 12, 14, 9, 14, 9, 12, 40, 11, 11, 12, 12])
+    for r in Recitation.objects.select_related('student', 'circle').order_by('-date', 'student__name', 'id'):
+        ws_rec.append([r.date.isoformat(), r.student.name, r.circle.name, r.get_kind_display(),
+                       quran.SURAH_NAME.get(r.from_surah, ''), r.from_ayah,
+                       quran.SURAH_NAME.get(r.to_surah, ''), r.to_ayah,
+                       r.get_grade_display() if r.grade else '', r.notes or '',
+                       r.student_id, r.circle_id, r.from_surah, r.to_surah])
+
     # ── تجميع الملف وإرساله ───────────────────────────────────
     excel_buffer = io.BytesIO()
     wb.save(excel_buffer)
@@ -1563,6 +1595,7 @@ def migrate_sqlite_to_postgres(request):
         messages.error(request, err)
         return redirect(reverse('developer_page') + '#import')
 
+    cache_utils.invalidate_all()           # bulk_create لا يرسل signals → نُبطل الكاش يدوياً
     total = sum(c for _, c in results)
     _log_admin_action(request, f'📥 استيراد Excel ({mode_label}) اكتمل: أُضيف {total} سجل')
 
@@ -1589,6 +1622,20 @@ def developer_page(request):
         'active_nav': 'developer',
         'pg_stats': pg_stats,
         'total_pg': sum(c for _, c in pg_stats),
+        'cache_status': cache_utils.status(),
+    })
+
+
+@login_required
+@require_POST
+def developer_cache_refresh(request):
+    """يمسح كاش الذاكرة ويعيد ملأه فوراً (مفيد بعد تعديل مباشر على قاعدة البيانات من خارج التطبيق)."""
+    cache_utils.invalidate_all()
+    info = cache_utils.warm_cache(close_connections=False)
+    failed = info.get('failed', [])
+    return JsonResponse({
+        'ok': not failed, 'seconds': info.get('seconds'), 'at': info.get('at'),
+        'items': info.get('ok', []), 'failed': failed,
     })
 
 
@@ -1600,6 +1647,7 @@ def _db_counts():
         ('حضور الطلاب', Attendance.objects.count()),
         ('حضور الأساتذة', TeacherAttendance.objects.count()),
         ('السبر', Sabr.objects.count()),
+        ('التسميع', Recitation.objects.count()),
         ('الدورات', Course.objects.count()),
         ('حضور الدورات', CourseAttendance.objects.count()),
         ('حضور أساتذة الدورات', CourseTeacherAttendance.objects.count()),
@@ -1658,10 +1706,11 @@ def _bucket_label(k, mode):
     return f'{_MONTHS_AR[k.month - 1]} {k.year % 100:02d}'
 
 
-def _stats_population(sources, start, end, top_limit=None, sort='absence', student_meta=None,
-                      page_size=None, page=1, q='', sort_dir=None):
+def _stats_population_base(sources, start, end, student_meta=None):
     """
-    يجمّع إحصائيات فئة واحدة (طلاب أو كادر) من عدة مصادر سجلات ضمن الفترة [start, end].
+    الجزء الثقيل من إحصائيات فئة واحدة (طلاب أو كادر): يجمّع سجلات عدة مصادر ضمن الفترة [start, end]
+    ويحسب نسب كل فرد (إجمالاً ثم شهراً بشهر). لا يعتمد على الفرز/البحث/الصفحة، لذا يُخزَّن في الكاش
+    وتُطبَّق عليه _stats_population_view في كل طلب.
     كل مصدر: dict(qs, label, pid, pname, psub)  — label نص ثابت أو اسم حقل (يبدأ بـ '@').
     كل الأرقام تُعرض كنسب مئوية (إلى جانب العدد) لتكون قابلة للمقارنة.
     """
@@ -1673,6 +1722,7 @@ def _stats_population(sources, start, end, top_limit=None, sort='absence', stude
     own_dates = defaultdict(lambda: defaultdict(set))   # pid → (رقم المصدر، المجموعة) → تواريخ سجلاته
     group_dates = {}                                    # (رقم المصدر، المجموعة) → أيام الدوام المسجّلة لرفاقه
     first_ever = {}                                     # pid → تاريخ أول سجل له
+    p_month = defaultdict(lambda: defaultdict(_blank_counts))   # pid → أول يوم من الشهر → عدّادات الحالات
 
     for si, src in enumerate(sources):
         qs = src['qs'].filter(date__gte=start, date__lte=end)
@@ -1714,6 +1764,7 @@ def _stats_population(sources, start, end, top_limit=None, sort='absence', stude
             p = people.setdefault(pid, {'id': pid, 'name': pname, 'sub': psub if src.get('psub') else '',
                                         **_blank_counts()})
             p[status] += 1
+            p_month[pid][d.replace(day=1)][status] += 1
 
     # صفوف المصادر (الأعلى حضوراً أولاً)
     source_rows = [{'label': label, **_with_pcts(c)} for label, c in by_source.items()]
@@ -1741,10 +1792,15 @@ def _stats_population(sources, start, end, top_limit=None, sort='absence', stude
 
     # الأشخاص — النسب تُحسب من «أيام الدوام المتوقعة» (كل الأيام التي سُجّل فيها حضور
     # لرفاقه في حلقته/دورته)، لا من سجلاته هو فقط؛ فمن له سجل واحد لا تصبح نسبته 100%.
+    # وتُحسب النسبة بالمعادلة نفسها لكل شهر ميلادي على حدة (أعمدة «حسب الأشهر»).
+    month_keys = sorted({d.replace(day=1) for d in by_date})
+    month_cols = [{'key': k.strftime('%Y-%m'), 'label': f'{_MONTHS_AR[k.month - 1]} {k.year}'}
+                  for k in month_keys]
     people_rows = []
     for p in people.values():
         expected = 0
         exclusive_days = set()
+        exp_m = defaultdict(int)                  # أيام الدوام المتوقعة لهذا الفرد في كل شهر
         joined = first_ever.get(p['id'], start)
         if student_meta is not None:              # تاريخ انضمام الطالب إن كان أسبق من أول سجل له
             j = student_meta.get(p['id'], {}).get('joined')
@@ -1756,7 +1812,11 @@ def _stats_population(sources, start, end, top_limit=None, sort='absence', stude
                 exclusive_days |= days          # حلقة واحدة في اليوم (حتى لو انتقل الطالب بين حلقتين)
             else:
                 expected += len(days)
+                for d in days:
+                    exp_m[d.replace(day=1)] += 1
         expected += len(exclusive_days)
+        for d in exclusive_days:
+            exp_m[d.replace(day=1)] += 1
         recorded = sum(p[k] for k in _STAT_KEYS)
         expected = max(expected, recorded)
         p['total'] = recorded
@@ -1767,6 +1827,28 @@ def _stats_population(sources, start, end, top_limit=None, sort='absence', stude
         p['pct_unrecorded'] = round(p['unrecorded'] / expected * 100) if expected else 0
         base = expected - p['excused']          # الإذن مستبعد، وغير المسجّل يُحتسب عدم حضور
         p['rate'] = round((p['present'] + p['late']) / base * 100) if base > 0 else None
+
+        # تفصيل كل شهر: نفس معادلة النسبة الكاملة لكن على أيام ذلك الشهر فقط (None = لا أيام له فيه)
+        pm = p_month.get(p['id'], {})
+        cells, mrate = [], {}
+        for mk, col in zip(month_keys, month_cols):
+            c = pm.get(mk)
+            rec_m = sum(c[k] for k in _STAT_KEYS) if c else 0
+            exp = max(exp_m.get(mk, 0), rec_m)
+            if exp == 0:
+                cells.append(None)
+                mrate[col['key']] = None
+                continue
+            cc = c or _blank_counts()
+            base_m = exp - cc['excused']
+            rate_m = round((cc['present'] + cc['late']) / base_m * 100) if base_m > 0 else None
+            cells.append({'rate': rate_m, 'recorded': rec_m, 'expected': exp, 'unrecorded': exp - rec_m,
+                          'present': cc['present'], 'late': cc['late'],
+                          'absent': cc['absent'], 'excused': cc['excused']})
+            mrate[col['key']] = rate_m
+        p['months'] = cells
+        p['mrate'] = mrate
+
         if student_meta is not None:
             meta = student_meta.get(p['id'], {})
             p['age'] = meta.get('age')
@@ -1790,40 +1872,15 @@ def _stats_population(sources, start, end, top_limit=None, sort='absence', stude
         p['rank'] = 1 + sum(1 for r in rates if r > p['rate'])
         p['peer_n'] = len(rates)
 
-    # الفرز: (دالة القيمة، الاتجاه الافتراضي) — القيم الفارغة دائماً في الآخر
-    sort_keys = {
-        'absence': (lambda p: p['pct_absent'], 'desc'),
-        'rate': (lambda p: p['rate'], 'desc'),
-        'name': (lambda p: p['name'], 'asc'),
-        'age': (lambda p: p.get('age'), 'asc'),
-        'circle': (lambda p: (p.get('circle_order', 9999), p['sub']), 'asc'),
-        'sabr': (lambda p: p.get('sabr', 0), 'desc'),
-        'present': (lambda p: p['pct_present'], 'desc'),
-        'late': (lambda p: p['pct_late'], 'desc'),
-        'excused': (lambda p: p['pct_excused'], 'desc'),
-        'unrecorded': (lambda p: p['pct_unrecorded'], 'desc'),
-        'diff': (lambda p: p['diff'], 'desc'),
+    # «متوسط الكل»: متوسط نسب الأفراد (الإجمالية ولكل شهر) — يظهر أسفل جدول «حسب الأشهر»
+    def _avg(vals):
+        vals = [v for v in vals if v is not None]
+        return round(sum(vals) / len(vals)) if vals else None
+    people_avg = {
+        'rate': _avg(p['rate'] for p in people_rows),
+        'months': [_avg(p['months'][i]['rate'] if p['months'][i] else None for p in people_rows)
+                   for i in range(len(month_cols))],
     }
-    keyf, default_dir = sort_keys.get(sort, sort_keys['absence'])
-    direction = sort_dir if sort_dir in ('asc', 'desc') else default_dir
-    people_rows.sort(key=lambda p: p['name'])
-    with_val = [p for p in people_rows if keyf(p) is not None]
-    without = [p for p in people_rows if keyf(p) is None]
-    with_val.sort(key=keyf, reverse=(direction == 'desc'))
-    people_rows = with_val + without
-
-    # فلترة بالاسم/الحلقة + تقسيم لصفحات (لتخفيف حجم الصفحة وسرعة التحميل)
-    filtered = people_rows
-    if q:
-        nq = _norm_ar(q)
-        filtered = [p for p in people_rows if nq in _norm_ar(p['name'] + ' ' + (p['sub'] or ''))]
-    pages = 1
-    if page_size:
-        pages = max(1, -(-len(filtered) // page_size))
-        page = min(max(1, page), pages)
-        shown = filtered[(page - 1) * page_size: page * page_size]
-    else:
-        shown = filtered[:top_limit] if top_limit else filtered
 
     # التفصيل الشهري: نسب كل شهر على حدة + المجمل + متوسط الأشهر
     months = {}
@@ -1845,21 +1902,86 @@ def _stats_population(sources, start, end, top_limit=None, sort='absence', stude
     return {
         'monthly': monthly,
         'monthly_avg': monthly_avg,
-        'page': page if page_size else 1,
-        'pages': pages,
-        'page_range': list(range(1, pages + 1)),
-        'people_filtered': len(filtered),
-        'sort_dir': direction,
         **_with_pcts(total),
         'counts': total,
         'sources': source_rows,
         'chart': chart,
         'chart_mode': mode,
         'session_days': len(by_date),
-        'people': shown,
-        'people_total': len(people_rows),
-        'people_truncated': bool(top_limit and len(people_rows) > top_limit),
+        'month_cols': month_cols,
+        'people_avg': people_avg,
+        'people_rows': people_rows,
     }
+
+
+_STATS_BASE_SORTS = ('absence', 'rate', 'circle', 'age', 'name', 'diff', 'unrecorded')   # خيارات قائمة الترتيب
+_STATS_COLUMN_SORTS = ('sabr', 'present', 'late', 'excused')                             # فرز بأعمدة الجدول
+_MONTH_SORT_RE = re.compile(r'^m_\d{4}-\d{2}$')                                           # فرز بعمود شهر: m_2026-09
+
+
+def _stats_population_view(base, sort='absence', top_limit=None, page_size=None, page=1, q='', sort_dir=None):
+    """يطبّق الفرز والبحث والتقسيم لصفحات على ناتج _stats_population_base (خفيف، يُنفَّذ لكل طلب)."""
+    people_rows = base['people_rows']
+
+    # الفرز: (دالة القيمة، الاتجاه الافتراضي) — القيم الفارغة دائماً في الآخر
+    sort_keys = {
+        'absence': (lambda p: p['pct_absent'], 'desc'),
+        'rate': (lambda p: p['rate'], 'desc'),
+        'name': (lambda p: p['name'], 'asc'),
+        'age': (lambda p: p.get('age'), 'asc'),
+        'circle': (lambda p: (p.get('circle_order', 9999), p['sub']), 'asc'),
+        'sabr': (lambda p: p.get('sabr', 0), 'desc'),
+        'present': (lambda p: p['pct_present'], 'desc'),
+        'late': (lambda p: p['pct_late'], 'desc'),
+        'excused': (lambda p: p['pct_excused'], 'desc'),
+        'unrecorded': (lambda p: p['pct_unrecorded'], 'desc'),
+        'diff': (lambda p: p['diff'], 'desc'),
+    }
+    if _MONTH_SORT_RE.match(sort or ''):
+        month_key = sort[2:]
+        keyf, default_dir = (lambda p: p['mrate'].get(month_key)), 'desc'
+    else:
+        keyf, default_dir = sort_keys.get(sort, sort_keys['absence'])
+    direction = sort_dir if sort_dir in ('asc', 'desc') else default_dir
+    rows = sorted(people_rows, key=lambda p: p['name'])
+    with_val = [p for p in rows if keyf(p) is not None]
+    without = [p for p in rows if keyf(p) is None]
+    with_val.sort(key=keyf, reverse=(direction == 'desc'))
+    rows = with_val + without
+
+    # فلترة بالاسم/الحلقة + تقسيم لصفحات (لتخفيف حجم الصفحة وسرعة التحميل)
+    filtered = rows
+    if q:
+        nq = _norm_ar(q)
+        filtered = [p for p in rows if nq in _norm_ar(p['name'] + ' ' + (p['sub'] or ''))]
+    pages = 1
+    if page_size:
+        pages = max(1, -(-len(filtered) // page_size))
+        page = min(max(1, page), pages)
+        shown = filtered[(page - 1) * page_size: page * page_size]
+    else:
+        shown = filtered[:top_limit] if top_limit else filtered
+
+    out = {k: v for k, v in base.items() if k != 'people_rows'}
+    out.update({
+        'page': page if page_size else 1,
+        'pages': pages,
+        'page_range': list(range(1, pages + 1)),
+        'people_filtered': len(filtered),
+        'sort_dir': direction,
+        'people': shown,
+        'people_total': len(rows),
+        'people_truncated': bool(top_limit and len(rows) > top_limit),
+    })
+    return out
+
+
+def _stats_population(sources, start, end, top_limit=None, sort='absence', student_meta=None,
+                      page_size=None, page=1, q='', sort_dir=None):
+    """الحساب الكامل في خطوة واحدة (بدون كاش): base ثم view."""
+    base = _stats_population_base(sources, start, end, student_meta=student_meta)
+    return _stats_population_view(base, sort=sort, top_limit=top_limit, page_size=page_size,
+                                  page=page, q=q, sort_dir=sort_dir)
 
 
 def _norm_ar(s):
@@ -1901,7 +2023,7 @@ def _stats_context(request, top_limit=None, paginate=False):
             end = start.replace(day=calendar.monthrange(y, m)[1])
         except (ValueError, TypeError):
             pass
-    first_record = _first_record_date() or today
+    first_record = cache_utils.stats_cached('first_record', _first_record_date) or today
     if not start:
         start = first_record                       # افتراضياً: من أول تاريخ مسجّل
     if not end:
@@ -1932,8 +2054,7 @@ def _stats_context(request, top_limit=None, paginate=False):
     if who not in ('students', 'staff', 'both'):
         who = 'both'
     sort = g.get('sort', 'absence')
-    if sort not in ('absence', 'rate', 'name', 'age', 'circle', 'sabr', 'present', 'late',
-                    'excused', 'unrecorded', 'diff'):
+    if not (sort in _STATS_BASE_SORTS or sort in _STATS_COLUMN_SORTS or _MONTH_SORT_RE.match(sort)):
         sort = 'absence'
     sort_dir = g.get('dir') if g.get('dir') in ('asc', 'desc') else None
 
@@ -1965,54 +2086,69 @@ def _stats_context(request, top_limit=None, paginate=False):
     if age_max is not None:
         age_q['student__birth_date__gt'] = _years_ago(age_max + 1)
 
-    # ── مصادر البيانات حسب النطاق ──
-    att_qs = Attendance.objects.filter(**age_q)
-    # expected = (استعلام، حقل المجموعة) تُستخرج منه أيام الدوام الفعلية لكل حلقة/دورة
-    circle_days = Attendance.objects.filter(circle=circle) if circle else Attendance.objects.all()
-    student_sources = [dict(qs=att_qs, label='@circle__name', prefix='حلقة ',
-                            pid='student_id', pname='student__name', psub='circle__name',
-                            group='circle_id', expected=(circle_days, 'circle_id'), exclusive=True)]
-    staff_sources = [dict(qs=TeacherAttendance.objects.all(), label='@circle__name', prefix='حلقة ',
-                          pid='teacher_id', pname='teacher__name',
-                          group='circle_id', expected=(circle_days, 'circle_id'))]
-    if circle:
-        student_sources[0]['qs'] = att_qs.filter(circle=circle)
-        staff_sources[0]['qs'] = TeacherAttendance.objects.filter(circle=circle)
-    else:
-        student_sources.append(dict(qs=CourseAttendance.objects.filter(**age_q), label='@course__name', prefix='دورة ',
-                                    pid='student_id', pname='student__name', psub='student__circle__name',
-                                    group='course_id', expected=(CourseAttendance.objects.all(), 'course_id')))
-        staff_sources.append(dict(qs=CourseTeacherAttendance.objects.all(), label='@course__name', prefix='دورة ',
-                                  pid='teacher_id', pname='teacher__name',
-                                  group='course_id', expected=(CourseAttendance.objects.all(), 'course_id')))
-        staff_sources.append(dict(qs=TeacherDailyAttendance.objects.all(), label='التفقد العام',
-                                  pid='teacher_id', pname='teacher__name',
-                                  expected=(TeacherDailyAttendance.objects.all(), None)))
+    def _build_bundle():
+        """الحساب الثقيل: مصادر السجلات → إحصائيات الطلاب/الكادر/السبر. يُخزَّن في الكاش لكل مجموعة فلاتر."""
+        # ── مصادر البيانات حسب النطاق ──
+        att_qs = Attendance.objects.filter(**age_q)
+        # expected = (استعلام، حقل المجموعة) تُستخرج منه أيام الدوام الفعلية لكل حلقة/دورة
+        circle_days = Attendance.objects.filter(circle=circle) if circle else Attendance.objects.all()
+        student_sources = [dict(qs=att_qs, label='@circle__name', prefix='حلقة ',
+                                pid='student_id', pname='student__name', psub='circle__name',
+                                group='circle_id', expected=(circle_days, 'circle_id'), exclusive=True)]
+        staff_sources = [dict(qs=TeacherAttendance.objects.all(), label='@circle__name', prefix='حلقة ',
+                              pid='teacher_id', pname='teacher__name',
+                              group='circle_id', expected=(circle_days, 'circle_id'))]
+        if circle:
+            student_sources[0]['qs'] = att_qs.filter(circle=circle)
+            staff_sources[0]['qs'] = TeacherAttendance.objects.filter(circle=circle)
+        else:
+            student_sources.append(dict(qs=CourseAttendance.objects.filter(**age_q), label='@course__name', prefix='دورة ',
+                                        pid='student_id', pname='student__name', psub='student__circle__name',
+                                        group='course_id', expected=(CourseAttendance.objects.all(), 'course_id')))
+            staff_sources.append(dict(qs=CourseTeacherAttendance.objects.all(), label='@course__name', prefix='دورة ',
+                                      pid='teacher_id', pname='teacher__name',
+                                      group='course_id', expected=(CourseAttendance.objects.all(), 'course_id')))
+            staff_sources.append(dict(qs=TeacherDailyAttendance.objects.all(), label='التفقد العام',
+                                      pid='teacher_id', pname='teacher__name',
+                                      expected=(TeacherDailyAttendance.objects.all(), None)))
 
-    student_meta = None
-    if who in ('students', 'both'):
-        from .models import age_from_birth_date
-        order = {c.id: i for i, c in enumerate(circles)}
-        from collections import Counter
-        sabr_counts = Counter(Sabr.objects.filter(date__gte=start, date__lte=end).values_list('student_id', flat=True))
-        student_meta = {
-            sid: {'age': age_from_birth_date(bd, today) if bd else None, 'circle_order': order.get(cid, 9999),
-                  'sabr': sabr_counts.get(sid, 0),
-                  'joined': timezone.localtime(ja).date() if ja else None}
-            for sid, bd, cid, ja in Student.objects.values_list('id', 'birth_date', 'circle_id', 'joined_at')
+        student_meta = None
+        if who in ('students', 'both'):
+            from .models import age_from_birth_date
+            order = {c.id: i for i, c in enumerate(circles)}
+            from collections import Counter
+            sabr_counts = Counter(Sabr.objects.filter(date__gte=start, date__lte=end).values_list('student_id', flat=True))
+            student_meta = {
+                sid: {'age': age_from_birth_date(bd, today) if bd else None, 'circle_order': order.get(cid, 9999),
+                      'sabr': sabr_counts.get(sid, 0),
+                      'joined': timezone.localtime(ja).date() if ja else None}
+                for sid, bd, cid, ja in Student.objects.values_list('id', 'birth_date', 'circle_id', 'joined_at')
+            }
+
+        students_base = (_stats_population_base(student_sources, start, end, student_meta=student_meta)
+                         if who in ('students', 'both') else None)
+        staff_base = _stats_population_base(staff_sources, start, end) if who in ('staff', 'both') else None
+        return {
+            'students': students_base,
+            'staff': staff_base,
+            'sabr': _sabr_stats(start, end, circle, age_q, circles) if who in ('students', 'both') else None,
+            'has_birth_dates': Student.objects.filter(birth_date__isnull=False).exists(),
         }
+
+    bundle = cache_utils.stats_cached(
+        f'bundle:{start}:{end}:{scope}:{who}:{age_min}:{age_max}:{today}', _build_bundle)
 
     try:
         page = int(g.get('page') or 1)
     except ValueError:
         page = 1
     q = (g.get('q') or '').strip()
-    students_stats = (_stats_population(student_sources, start, end, top_limit=top_limit, sort=sort,
-                                        student_meta=student_meta, page_size=25 if paginate else None,
-                                        page=page, q=q, sort_dir=sort_dir)
-                      if who in ('students', 'both') else None)
+    students_stats = (_stats_population_view(bundle['students'], sort=sort, top_limit=top_limit,
+                                             page_size=25 if paginate else None, page=page, q=q, sort_dir=sort_dir)
+                      if bundle['students'] is not None else None)
     staff_sort = sort if sort in ('absence', 'rate', 'name') else 'absence'
-    staff_stats = _stats_population(staff_sources, start, end, sort=staff_sort) if who in ('staff', 'both') else None
+    staff_stats = (_stats_population_view(bundle['staff'], sort=staff_sort)
+                   if bundle['staff'] is not None else None)
 
     filter_qs = request.GET.copy()
     for k in ('from', 'to', 'month', 'page'):
@@ -2020,8 +2156,11 @@ def _stats_context(request, top_limit=None, paginate=False):
     page_qs = request.GET.copy()
     page_qs.pop('page', None)
 
-    sabr_stats = (_sabr_stats(start, end, circle, age_q, circles)
-                  if who in ('students', 'both') else None)
+    # روابط فرز أعمدة الأشهر في جدول الطلاب (m_YYYY-MM)
+    sort_links = _sort_links(request, sort, students_stats['sort_dir'] if students_stats else None,
+                             [c['key'] for c in students_stats['month_cols']] if students_stats else ())
+    if students_stats:
+        students_stats['month_cols'] = [{**c, **sort_links['m_' + c['key']]} for c in students_stats['month_cols']]
 
     return {
         'active_nav': 'stats',
@@ -2030,24 +2169,26 @@ def _stats_context(request, top_limit=None, paginate=False):
         'quick_ranges': quick_ranges, 'keep_qs': filter_qs.urlencode(),
         'circles': circles, 'scope': scope, 'circle': circle, 'who': who,
         'sort': sort, 'age_min': age_min, 'age_max': age_max,
-        'has_birth_dates': Student.objects.filter(birth_date__isnull=False).exists(),
+        'sort_custom': sort not in _STATS_BASE_SORTS,       # فرز بعمود الجدول → خيار «حسب العمود المختار»
+        'has_birth_dates': bundle['has_birth_dates'],
         'students_stats': students_stats, 'staff_stats': staff_stats,
-        'sabr_stats': sabr_stats,
-        'sort_links': _sort_links(request, sort, students_stats['sort_dir'] if students_stats else None),
+        'sabr_stats': bundle['sabr'],
+        'sort_links': sort_links,
         'q': q, 'page_qs': page_qs.urlencode(),
         'keep_qs_noq': '&'.join(f'{k}={v}' for k, v in page_qs.items() if k != 'q'),
         'first_record': first_record,
     }
 
 
-def _sort_links(request, sort, direction):
-    """روابط ترويسات جدول الطلاب: الضغط يفرز، والضغط ثانيةً يعكس الاتجاه."""
+def _sort_links(request, sort, direction, month_keys=()):
+    """روابط ترويسات جدول الطلاب: الضغط يفرز، والضغط ثانيةً يعكس الاتجاه. month_keys = أعمدة الأشهر (YYYY-MM)."""
     base = request.GET.copy()
     for k in ('sort', 'dir', 'page'):
         base.pop(k, None)
     base = base.urlencode()
     out = {}
-    for key in ('name', 'age', 'sabr', 'rate', 'diff', 'present', 'late', 'absence', 'excused', 'unrecorded', 'circle'):
+    for key in ('name', 'age', 'sabr', 'rate', 'diff', 'present', 'late', 'absence', 'excused', 'unrecorded', 'circle',
+                *('m_' + mk for mk in month_keys)):
         active = key == sort
         nxt = ('asc' if direction == 'desc' else 'desc') if active else ''
         out[key] = {
@@ -2208,3 +2349,253 @@ def sabr_delete(request, sabr_id):
     _log_admin_action(request, f'🗑 حذف سبر {student.name} بتاريخ {sabr.date}')
     sabr.delete()
     return JsonResponse(_sabr_payload(student))
+
+
+# ============================================================
+#  فرز الطلاب بالسحب والإفلات (لوحة التحكم): كل الحلقات حاويات، والطالب بطاقة تُنقل بينها
+# ============================================================
+
+_MOVE_LOG, _MOVE_LOCK, _MOVE_TIMER = [], threading.Lock(), [None]
+
+
+def _flush_student_moves():
+    with _MOVE_LOCK:
+        items = list(_MOVE_LOG)
+        _MOVE_LOG.clear()
+        _MOVE_TIMER[0] = None
+    if not items:
+        return
+    lines = [f'🔀 نقل طلاب بين الحلقات ({len(items)}):'] + [f'• {text}' for _, text in items[:40]]
+    if len(items) > 40:
+        lines.append(f'… و{len(items) - 40} عملية أخرى')
+    who = '، '.join(sorted({w for w, _ in items}))
+    send_telegram_message('\n'.join(lines) + f'\nبواسطة: {who}\nالوقت: {timezone.localtime():%Y-%m-%d %H:%M}')
+
+
+def _log_student_move(request, text):
+    """يجمع عمليات النقل ويرسلها لتلغرام رسالةً واحدة بعد 20 ثانية (بلا إغراق، ودون تأخير الاستجابة)."""
+    if not getattr(settings, 'TELEGRAM_LOG_ADMIN_ACTIONS', False):
+        return
+    who = request.user.get_username() if request.user.is_authenticated else 'غير معروف'
+    with _MOVE_LOCK:
+        _MOVE_LOG.append((who, text))
+        if _MOVE_TIMER[0] is None:
+            timer = threading.Timer(20.0, _flush_student_moves)
+            timer.daemon = True
+            _MOVE_TIMER[0] = timer
+            timer.start()
+
+
+@login_required
+def sort_students_page(request):
+    """لوحة فرز الطلاب: حاوية كبيرة لكل حلقة، وكل طالب بطاقة تُسحب من حلقة إلى أخرى."""
+    circles = list(Circle.objects.select_related('teacher').order_by('display_order', 'name', 'id'))
+    by_circle = {c.id: [] for c in circles}
+    total = 0
+    for sid, name, cid in Student.objects.order_by('name').values_list('id', 'name', 'circle_id'):
+        by_circle.setdefault(cid, []).append({'id': sid, 'name': name})
+        total += 1
+    return render(request, 'halaqat/sort_students.html', {
+        'boards': [{'circle': c, 'students': by_circle.get(c.id, [])} for c in circles],
+        'total_students': total,
+        'active_nav': 'admin',
+    })
+
+
+@login_required
+@require_POST
+def sort_students_move(request):
+    """ينقل طالباً إلى حلقة أخرى (يُستدعى عند إفلات البطاقة). سجلات حضوره السابقة تبقى كما هي."""
+    from django.db.models import Count
+    try:
+        student_id = int(request.POST.get('student_id', ''))
+        circle_id = int(request.POST.get('circle_id', ''))
+    except ValueError:
+        return JsonResponse({'ok': False, 'error': 'بيانات غير صالحة'}, status=400)
+    student = get_object_or_404(Student.objects.select_related('circle'), pk=student_id)
+    target = get_object_or_404(Circle, pk=circle_id)
+    old = student.circle
+    if old.id != target.id:
+        student.circle = target
+        student.save(update_fields=['circle', 'updated_at'])
+        _log_student_move(request, f'{student.name}: «{old.name}» ← «{target.name}»')
+    counts = dict(Student.objects.filter(circle_id__in=[old.id, target.id])
+                  .order_by().values('circle_id').annotate(n=Count('id')).values_list('circle_id', 'n'))
+    return JsonResponse({
+        'ok': True,
+        'student': {'id': student.id, 'name': student.name},
+        'from': {'id': old.id, 'name': old.name, 'count': counts.get(old.id, 0)},
+        'to': {'id': target.id, 'name': target.name, 'count': counts.get(target.id, 0)},
+    })
+
+
+# ============================================================
+#  التسميع: تسجيل ما سمّعه الطلاب من القرآن الكريم، حلقةً حلقة
+# ============================================================
+
+def _recitation_item(r, today):
+    return {
+        'id': r.id,
+        'date': r.date.isoformat(),
+        'date_display': r.date.strftime('%Y-%m-%d'),
+        'days_ago': (today - r.date).days,
+        'kind': r.kind, 'kind_display': r.get_kind_display(),
+        'from_surah': r.from_surah, 'from_ayah': r.from_ayah,
+        'to_surah': r.to_surah, 'to_ayah': r.to_ayah,
+        'range': r.range_display, 'ayahs': r.ayah_count,
+        'grade': r.grade, 'grade_display': r.get_grade_display() if r.grade else '',
+        'notes': r.notes,
+    }
+
+
+def _recitation_payload(student, on_date=None):
+    """بيانات الطالب وآخر تسميعاته (+ تسميع اليوم المعروض في الصفحة إن حُدِّد on_date)."""
+    today = timezone.localdate()
+    qs = student.recitations.all()                      # الأحدث أولاً (ترتيب النموذج)
+    items = [_recitation_item(x, today) for x in qs[:15]]
+    payload = {
+        'ok': True,
+        'today': today.isoformat(),
+        'student': {'id': student.id, 'name': student.name,
+                    'circle': student.circle.name, 'circle_id': student.circle_id},
+        'history': items,
+        'last': items[0] if items else None,
+        'total': qs.count(),
+    }
+    if on_date:
+        payload['day'] = [_recitation_item(x, today) for x in qs.filter(date=on_date).order_by('id')]
+    return payload
+
+
+def _parse_recitation_post(request):
+    """يقرأ حقول التسميع من POST ويتحقق منها. يعيد (قيم النموذج، نص الخطأ)."""
+    post = request.POST
+    raw = (post.get('date') or '').strip()
+    if raw:
+        d = _parse_iso(raw)
+        if d is None:
+            return None, 'تاريخ غير صالح'
+        if d > timezone.localdate():
+            return None, 'لا يمكن تسجيل تسميع بتاريخ مستقبلي'
+    else:
+        d = timezone.localdate()
+
+    def _int(name):
+        try:
+            return int(post.get(name, ''))
+        except (TypeError, ValueError):
+            return None
+    from_surah, from_ayah = _int('from_surah'), _int('from_ayah')
+    to_surah, to_ayah = _int('to_surah'), _int('to_ayah')
+    if to_surah is None:
+        to_surah = from_surah
+    if None in (from_surah, from_ayah, to_surah, to_ayah):
+        return None, 'أكمل السورة وأرقام الآيات'
+    err = quran.validate_range(from_surah, from_ayah, to_surah, to_ayah)
+    if err:
+        return None, err
+    kind = post.get('kind') or 'new'
+    if kind not in dict(Recitation.KIND_CHOICES):
+        return None, 'نوع التسميع غير صالح'
+    grade = post.get('grade') or ''
+    if grade and grade not in dict(Recitation.GRADE_CHOICES):
+        return None, 'التقدير غير صالح'
+    return {
+        'date': d, 'kind': kind, 'grade': grade,
+        'from_surah': from_surah, 'from_ayah': from_ayah, 'to_surah': to_surah, 'to_ayah': to_ayah,
+        'notes': (post.get('notes') or '').strip()[:255],
+    }, None
+
+
+@login_required
+def recitation_page(request):
+    """صفحة التسميع: اختر حلقة وتاريخاً، ثم سجّل تسميع كل طالب من الحلقة على حدة."""
+    from collections import defaultdict
+    from django.db.models import Max
+    circles = cache_utils.circles()
+    today = timezone.localdate()
+    selected_date = _parse_iso(request.GET.get('date')) or today
+    if selected_date > today:
+        selected_date = today
+
+    circle = prev_circle = next_circle = None
+    if circles:
+        wanted = request.GET.get('circle')
+        circle = next((c for c in circles if str(c['id']) == str(wanted)), None) or circles[0]
+        idx = [c['id'] for c in circles].index(circle['id'])
+        prev_circle = circles[idx - 1] if idx > 0 else None
+        next_circle = circles[idx + 1] if idx < len(circles) - 1 else None
+
+    students = list(Student.objects.filter(circle_id=circle['id']).order_by('name')) if circle else []
+    ids = [st.id for st in students]
+    last_by, day_by = {}, defaultdict(list)
+    if ids:
+        # آخر تسميع لكل طالب: أحدث تاريخ ثم أكبر معرّف في ذلك اليوم (استعلامان صغيران بدل جلب كل السجلات)
+        latest = dict(Recitation.objects.filter(student_id__in=ids).order_by()
+                      .values('student_id').annotate(d=Max('date')).values_list('student_id', 'd'))
+        for r in Recitation.objects.filter(student_id__in=ids, date__in=set(latest.values())).order_by('id'):
+            if latest.get(r.student_id) == r.date:
+                last_by[r.student_id] = r
+        for r in Recitation.objects.filter(student_id__in=ids, date=selected_date).order_by('id'):
+            day_by[r.student_id].append(r)
+
+    rows = []
+    for st in students:
+        last = last_by.get(st.id)
+        rows.append({
+            'student': st,
+            'last': last,
+            'last_days_ago': (today - last.date).days if last else None,
+            'items': day_by.get(st.id, []),
+        })
+
+    return render(request, 'halaqat/recitation.html', {
+        'active_nav': 'recitation',
+        'circles': circles, 'circle': circle, 'prev_circle': prev_circle, 'next_circle': next_circle,
+        'rows': rows,
+        'heard': sum(1 for r in rows if r['items']),
+        'remaining': sum(1 for r in rows if not r['items']),
+        'selected_date': selected_date, 'today': today,
+        'surahs': quran.surahs_for_js(),
+        'kinds': Recitation.KIND_CHOICES, 'grades': Recitation.GRADE_CHOICES,
+    })
+
+
+@login_required
+def recitation_student_info(request, student_id):
+    student = get_object_or_404(Student.objects.select_related('circle'), pk=student_id)
+    return JsonResponse(_recitation_payload(student, _parse_iso(request.GET.get('date'))))
+
+
+@login_required
+@require_POST
+def recitation_add(request, student_id):
+    student = get_object_or_404(Student.objects.select_related('circle'), pk=student_id)
+    data, err = _parse_recitation_post(request)
+    if err:
+        return JsonResponse({'ok': False, 'error': err}, status=400)
+    Recitation.objects.create(student=student, circle=student.circle, **data)
+    return JsonResponse(_recitation_payload(student, _parse_iso(request.POST.get('ctx_date'))))
+
+
+@login_required
+@require_POST
+def recitation_update(request, rec_id):
+    rec = get_object_or_404(Recitation.objects.select_related('student', 'student__circle'), pk=rec_id)
+    data, err = _parse_recitation_post(request)
+    if err:
+        return JsonResponse({'ok': False, 'error': err}, status=400)
+    for key, value in data.items():
+        setattr(rec, key, value)
+    rec.save()
+    return JsonResponse(_recitation_payload(rec.student, _parse_iso(request.POST.get('ctx_date'))))
+
+
+@login_required
+@require_POST
+def recitation_delete(request, rec_id):
+    rec = get_object_or_404(Recitation.objects.select_related('student', 'student__circle'), pk=rec_id)
+    student = rec.student
+    _log_admin_action(request, f'🗑 حذف تسميع {student.name}: {rec.range_display} بتاريخ {rec.date}')
+    rec.delete()
+    return JsonResponse(_recitation_payload(student, _parse_iso(request.POST.get('ctx_date'))))
