@@ -132,7 +132,7 @@ def export_to_file(path):
                 counts[ttable] = len(batch)
         # 4) بيانات وصفية
         meta = {
-            'format': 'taha-sqlite-backup', 'version': '1',
+            'format': 'taha-sqlite-backup', 'version': '2',
             'source': connection.vendor,
             'exported_at': __import__('django.utils.timezone', fromlist=['timezone']).localtime().isoformat(),
         }
@@ -144,6 +144,10 @@ def export_to_file(path):
 
 
 def read_meta(path):
+    """
+    يقرأ جدول ``_meta`` إن وُجد (ملف صادر عن النظام) وقائمة الجداول.
+    **أي ملف SQLite صالح مقبول** — وجود ``_meta`` اختياري.
+    """
     conn = sqlite3.connect(path)
     try:
         cur = conn.cursor()
@@ -191,69 +195,167 @@ def _coerce(value, field):
     return value
 
 
-def import_from_file(path, keep_ai_settings=True):
+def _file_tables(path):
+    """أسماء الجداول الموجودة فعلاً في ملف SQLite (مع أعمدتها)."""
+    conn = sqlite3.connect(path)
+    try:
+        cur = conn.cursor()
+        names = [r[0] for r in cur.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+        cols = {}
+        for name in names:
+            cols[name] = {r[1] for r in cur.execute(f'PRAGMA table_info("{name}")').fetchall()}
+        return {n: cols[n] for n in names}
+    finally:
+        conn.close()
+
+
+def cascade_impact(to_import, limit=2000):
     """
-    يستورد ملف SQLite **باستبدال كامل** لكل البيانات (ذرّياً في معاملة واحدة).
-    يعيد {اسم الجدول: عدد الصفوف المستوردة}. يرفع ValueError برسالة عربية عند فشل التحقق.
+    يحسب بأمان ما سينحذف **بالتبعية** (CASCADE) من جداول **ليست في الملف**
+    عند استبدال الجداول الموجودة في الملف.
+
+    (Django لا يحذف بالتبعية على مستوى SQL هنا، بل يجمع التابعين في Python —
+     لذلك نستعمل Collector على عيّنة من كائنات الجداول المستبدلة.)
+    يعيد {اسم الجدول: عدد الصفوف} للجداول المتأثرة غير الموجودة في الملف.
     """
-    meta, tables = read_meta(path)
-    if meta.get('format') != 'taha-sqlite-backup':
-        raise ValueError('هذا الملف ليس نسخة SQLite صادرة عن النظام (جدول _meta مفقود أو غير مطابق).')
+    from django.db.models.deletion import Collector
+
+    models = [m for m in _ordered_models() if m._meta.db_table in to_import]
+    affected = {}
+    for model in models:
+        qs = model.objects.all()[:limit]
+        objs = list(qs)
+        if not objs:
+            continue
+        collector = Collector(using='default')
+        try:
+            collector.collect(objs)
+        except Exception:                          # noqa: BLE001
+            continue
+        for obj, related in collector.data.items():
+            rel_table = obj._meta.db_table
+            if rel_table in to_import:
+                continue                           # سيُستبدل أصلاً
+            n = len(related)
+            if n:
+                affected[rel_table] = max(affected.get(rel_table, 0), n)
+    return affected
+
+
+def import_from_file(path, keep_ai_settings=True, force=False):
+    """
+    يستورد ملف SQLite **باستبدال** لكل جدول موجود فيه (ذرّياً في معاملة واحدة).
+
+    قواعد مهمة (بناءً على طلب المستخدم):
+      • **أي ملف SQLite صالح مقبول** — لا يشترط وجود جدول ``_meta`` ولا كامل الجداول.
+      • الجداول **الغير موجودة في الملف تُترك كما هي** في القاعدة — لا تُحذف ولا تُفرَّغ.
+      • الجداول الموجودة في الملف تُستبدل تماماً بمحتواها (حتى لو كانت فارغة).
+      • الأعمدة الناقصة في الملف تُترك بقيمها الافتراضية.
+      • إعدادات الذكاء الاصطناعي (البرومت) لا تُمسّ عند الاستيراد.
+    يعيد {اسم الجدول: عدد الصفوف المستوردة}.
+    """
+    file_tables = _file_tables(path)
+    if not file_tables:
+        raise ValueError('الملف لا يحوي أي جدول — تأكّد أنه ملف SQLite صالح.')
+
+    models = _ordered_models()
+    if keep_ai_settings:
+        models = [m for m in models if m._meta.label not in KEPT_MODELS]
+    target_tables = {m._meta.db_table for m in models}
+
+    # أي جدول في الملف يعرف النظام جدوله؟ (نقبل أيضاً جداول m2m)
+    m2m_tables = set()
+    for m in models:
+        for f in m._meta.many_to_many:
+            m2m_tables.add(f.remote_field.through._meta.db_table)
+    known = target_tables | m2m_tables
+    to_import = [t for t in file_tables if t in known]
+    if not to_import:
+        raise ValueError('لا يوجد في ملفك أي جدول معروف للنظام '
+                         f'(الجداول في الملف: {", ".join(sorted(file_tables)[:8])}…) — '
+                         f'الجداول المتوقّعة مثل: {", ".join(sorted(target_tables)[:6])}.')
+
+    # حماية من الحذف بالتبعية للجداول غير الموجودة في الملف
+    collateral = cascade_impact(set(to_import))
+    if collateral and not force:
+        detail = '، '.join(f'{t} ({n} صفاً)' for t, n in sorted(collateral.items()))
+        raise ValueError(
+            f'تحذير: استبدال الجداول الموجودة في ملفك سيحذف بالتبعية بيانات في جداول '
+            f'غير موجودة في الملف: {detail}. '
+            f'لتجنّب ذلك أضِف هذه الجداول إلى الملف، أو أعد المحاولة مع خيار «الاستمرار رغم ذلك».'
+        )
 
     sql = sqlite3.connect(path)
     sql.row_factory = sqlite3.Row
     counts = {}
     try:
         cur = sql.cursor()
-        # نُعطّل فحص القيود أثناء الاستيراد (خارج المعاملة في SQLite)، ثم يُفحص الجميع عند التسجيل
         with connection.constraint_checks_disabled(), transaction.atomic():
-            # 1) إفراغ الجداول (ترتيب عكسي احتراماً للمفاتيح الأجنبية)
-            for model in reversed(_ordered_models()):
-                for f in model._meta.many_to_many:
-                    f.remote_field.through.objects.all().delete()
-                model.objects.all().delete()
-
-            # 2) إدخال الصفوف بمفاتيحها الأصلية ثم ضبط التسلسل (ترتيب أب ← ابن)
-            for model in _ordered_models():
+            # 1) إفراغ **الجداول التي سنستوردها فقط** (عكسي احتراماً للمفاتيح الأجنبية)
+            for model in reversed(models):
                 table = model._meta.db_table
+                for f in model._meta.many_to_many:
+                    through = f.remote_field.through
+                    if through._meta.db_table in to_import:
+                        through.objects.all().delete()
+                if table in to_import:
+                    model.objects.all().delete()
+
+            # 2) إدخال الصفوف بمفاتيحها الأصلية (ترتيب أب ← ابن)
+            for model in models:
+                table = model._meta.db_table
+                if table not in to_import:
+                    continue                          # الجدول غير موجود بالملف → يُترك كما هو
                 fields = _concrete_fields(model)
-                cols = [f.column for f in fields]
-                try:
-                    rows = cur.execute(f'SELECT {", ".join(chr(34)+c+chr(34) for c in cols)} FROM "{table}"').fetchall()
-                except sqlite3.Error:
-                    continue                          # الجدول غير موجود في الملف (نموذج أحدث/أقدم)
-                objs, pks = [], []
+                file_cols = file_tables[table]
+                usable = [f for f in fields if f.column in file_cols]
+                if not usable:
+                    counts[table] = 0
+                    continue
+                cols = [f.column for f in usable]
+                rows = cur.execute(
+                    f'SELECT {", ".join(chr(34)+c+chr(34) for c in cols)} FROM "{table}"'
+                ).fetchall()
+                objs = []
+                pk_field = next((f for f in usable if f.primary_key), None)
                 for row in rows:
                     kwargs = {}
-                    for f in fields:
+                    for f in usable:
                         if f.primary_key:
-                            pks.append(row[f.column])
                             continue
                         if isinstance(f, ForeignKey):
                             kwargs[f.attname] = row[f.column]
                         else:
                             kwargs[f.attname] = _coerce(row[f.column], f)
                     obj = model(**kwargs)
-                    if pks and len(pks) == len(objs) + 1:
-                        obj.pk = pks[-1]
+                    if pk_field is not None:
+                        obj.pk = row[pk_field.column]
                     objs.append(obj)
                 if objs:
-                    model.objects.bulk_create(objs, batch_size=500, ignore_conflicts=False)
+                    model.objects.bulk_create(objs, batch_size=500)
                 counts[table] = len(objs)
 
-            # 3) العلاقات many-to-many
-            for model in _ordered_models():
+            # 3) العلاقات many-to-many (للجداول الموجودة فقط)
+            for model in models:
                 for f in model._meta.many_to_many:
                     through = f.remote_field.through
-                    tcols = [x.column for x in through._meta.concrete_fields]
-                    try:
-                        rows = cur.execute(f'SELECT {", ".join(chr(34)+c+chr(34) for c in tcols)} FROM "{through._meta.db_table}"').fetchall()
-                    except sqlite3.Error:
+                    ttable = through._meta.db_table
+                    if ttable not in to_import:
                         continue
-                    links = [through(**{x.attname: row[x.column] for x in through._meta.concrete_fields}) for row in rows]
+                    file_cols = file_tables[ttable]
+                    usable = [x for x in through._meta.concrete_fields if x.column in file_cols]
+                    if not usable:
+                        counts[ttable] = 0
+                        continue
+                    rows = cur.execute(
+                        f'SELECT {", ".join(chr(34)+c+chr(34) for c in (x.column for x in usable))} '
+                        f'FROM "{ttable}"'
+                    ).fetchall()
+                    links = [through(**{x.attname: row[x.column] for x in usable}) for row in rows]
                     if links:
                         through.objects.bulk_create(links, batch_size=1000)
-                    counts[through._meta.db_table] = len(links)
+                    counts[ttable] = len(links)
 
             # 4) ضبط تسلسلات PostgreSQL (وإلا تتعارض المفاتيح الجديدة)
             _reset_sequences()
