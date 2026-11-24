@@ -93,8 +93,11 @@
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button onclick="saveAI(this)" class="btn-primary" style="flex:1;min-width:150px">💾 حفظ البرومت</button>
         <button onclick="testAI(this)" class="btn-outline" style="min-width:130px">🧪 اختبار الاتصال</button>
+        <button onclick="listModels(this)" class="btn-outline" style="min-width:130px">📋 النماذج المتاحة</button>
         <button onclick="resetPrompt(this)" class="btn-outline" style="min-width:130px">↩️ البرومت الافتراضي</button>
       </div>
+      <div id="ai-models-box" hidden
+           style="font-size:12px;line-height:1.9;background:#fbf7f0;border:1px solid #e6d9c4;border-radius:10px;padding:10px 12px"></div>
       <div style="font-size:11.5px;color:#9c8a71;line-height:1.8">
         البرومت يدعم العناصر التالية وتُستبدل تلقائياً عند كل سؤال:
         <code>{circles}</code> أسماء الحلقات ·
@@ -389,7 +392,39 @@ async function repairMigrations(btn) {
   } catch (e) { showToast('❌ خطأ في الاتصال', 'error'); }
   finally { setBtnLoading(btn, false); }
 }
+
+async function listModels(btn) {
+  setBtnLoading(btn, true);
+  const box = document.getElementById('ai-models-box');
+  box.hidden = false;
+  box.innerHTML = '⏳ جاري جلب النماذج من المزوّد…';
+  try {
+    const res = await fetch("{% url 'developer_ai_models' %}", {
+      method: 'POST',
+      headers: {'X-CSRFToken': getCsrf(), 'X-Requested-With': 'XMLHttpRequest'},
+    });
+    const d = await res.json();
+    if (!d.ok) { box.innerHTML = '⚠️ ' + (d.error || 'تعذّر الجلب'); showToast('⚠️ ' + (d.error || 'تعذّر الجلب'), 'warn', 6000); return; }
+    const cur = d.current, ok = d.current_available;
+    let html = '<b>النماذج المتاحة لمفتاحك (' + d.models.length + '):</b><div style="margin:6px 0 8px;display:flex;flex-wrap:wrap;gap:5px">';
+    d.models.forEach(m => {
+      const isCur = m === cur;
+      html += '<code dir="ltr" style="background:' + (isCur ? '#dfe9f5' : '#fff') + ';border:1px solid ' +
+              (isCur ? '#9dbcd8' : '#e3e7ec') + ';border-radius:6px;padding:1px 7px;font-size:11.5px">' + m + (isCur ? ' ✓' : '') + '</code>';
+    });
+    html += '</div>';
+    html += ok
+      ? '✅ النموذج الحالي <code dir="ltr">' + cur + '</code> متاح — إن استمر خطأ 404 فالمشكلة في <code dir="ltr">AI_BASE_URL</code>.'
+      : '⚠️ النموذج الحالي <code dir="ltr">' + cur + '</code> <b>غير متاح</b> — اضبط <code dir="ltr">AI_MODEL</code> بأحد الأسماء أعلاه.';
+    html += '<div style="color:#8a94a2;font-size:11px;margin-top:6px" dir="ltr">' + (d.endpoint || '') + '</div>';
+    box.innerHTML = html;
+    showToast(ok ? '✅ النموذج الحالي متاح' : '⚠️ النموذج الحالي غير متاح', ok ? 'success' : 'warn', 5000);
+  } catch (e) {
+    box.innerHTML = '❌ خطأ في الاتصال بالخادم';
+  } finally { setBtnLoading(btn, false); }
+}
 </script>
+
 
 
 

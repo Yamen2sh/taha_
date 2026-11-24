@@ -62,6 +62,7 @@ urlpatterns = [
     path('developer/cache/refresh/', views.developer_cache_refresh, name='developer_cache_refresh'),
     path('developer/ai/save/', views.developer_ai_save, name='developer_ai_save'),
     path('developer/ai/test/', views.developer_ai_test, name='developer_ai_test'),
+    path('developer/ai/models/', views.developer_ai_models, name='developer_ai_models'),
     path('developer/sqlite/export/', views.developer_sqlite_export, name='developer_sqlite_export'),
     path('developer/sqlite/import/', views.developer_sqlite_import, name='developer_sqlite_import'),
     path('developer/fill-defaults/', views.developer_fill_defaults, name='developer_fill_defaults'),
