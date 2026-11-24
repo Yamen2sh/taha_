@@ -65,6 +65,7 @@ urlpatterns = [
     path('developer/sqlite/export/', views.developer_sqlite_export, name='developer_sqlite_export'),
     path('developer/sqlite/import/', views.developer_sqlite_import, name='developer_sqlite_import'),
     path('developer/fill-defaults/', views.developer_fill_defaults, name='developer_fill_defaults'),
+    path('developer/migrate/', views.developer_run_migrations, name='developer_run_migrations'),
 
     # ── فرز الطلاب بالسحب والإفلات (لوحة التحكم) ──
     path('admin-panel/sort-students/', views.sort_students_page, name='sort_students'),

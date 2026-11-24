@@ -80,6 +80,28 @@ def _nav(items):
     return [{'url': reverse(n), 'key': k, 'icon': i, 'label': l} for n, k, i, l in items]
 
 
+def schema_context(request):
+    """
+    تنبيه عام لأي مستخدم إداري: إن كانت هناك ترحيلات غير مطبَّقة (أو جدول مفقود)
+    يظهر شريط تحذير في أعلى كل صفحة مع رابط مباشر لصفحة المطور.
+    النتيجة مُخزَّنة في الكاش 60 ثانية حتى لا يُسأل محرّك الترحيلات في كل طلب.
+    """
+    user = getattr(request, 'user', None)
+    if not (user and user.is_authenticated):
+        return {}
+    from django.core.cache import cache
+    data = cache.get('schema_alert')
+    if data is None:
+        try:
+            from . import schema_guard
+            status = schema_guard.schema_status()
+            data = {'count': status['pending_count'], 'missing': status['missing_tables']}
+        except Exception:                      # noqa: BLE001 — لا نُعطّل أي صفحة بسبب التنبيه
+            data = {'count': 0, 'missing': []}
+        cache.set('schema_alert', data, 60)
+    return {'schema_alert': data}
+
+
 def roles_context(request):
     user = getattr(request, 'user', None)
     viewer = bool(user and is_viewer(user))

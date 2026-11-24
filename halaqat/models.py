@@ -546,13 +546,26 @@ class AISettings(models.Model):
 
     @classmethod
     def load(cls):
-        """يعيد الصف الوحيد (وينشئه بالبرومت الافتراضي إن لم يكن موجوداً)."""
-        obj, created = cls.objects.get_or_create(name='default')
-        if created or not obj.prompt:
-            from .ai_query import DEFAULT_SYSTEM_PROMPT
-            obj.prompt = DEFAULT_SYSTEM_PROMPT
-            obj.save(update_fields=['prompt'])
-        return obj
+        """
+        يعيد الصف الوحيد (وينشئه بالبرومت الافتراضي إن لم يكن موجوداً).
+        **لا يرفع استثناءً أبداً**: إن لم يُطبَّق الترحيل بعد (جدول مفقود) أو تعذّر الوصول
+        لقاعدة البيانات، يُعاد كائن غير محفوظ بالبرومت الافتراضي حتى تبقى الصفحات تعمل.
+        """
+        from .ai_query import DEFAULT_SYSTEM_PROMPT
+        try:
+            obj, created = cls.objects.get_or_create(name='default')
+            if created or not obj.prompt:
+                obj.prompt = DEFAULT_SYSTEM_PROMPT
+                obj.save(update_fields=['prompt'])
+            return obj
+        except Exception:                       # noqa: BLE001 — جدول مفقود/قاعدة غير مهيّأة
+            return cls(name='default', prompt=DEFAULT_SYSTEM_PROMPT)
+
+    @classmethod
+    def is_ready(cls):
+        """هل جدول الإعدادات موجود في قاعدة البيانات؟ (لعرض تنبيه الترحيل في صفحة المطور)"""
+        from .schema_guard import _table_exists
+        return _table_exists(cls._meta.db_table)
 
     # ── القيم الفعّالة: من متغيّرات البيئة فقط (لا قاعدة بيانات) ──
     @staticmethod

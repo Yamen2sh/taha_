@@ -39,6 +39,12 @@
 {% endif %}
 
 <div class="page-wrap">
+  {% if schema_alert and schema_alert.count %}
+  <div class="schema-alert" role="alert">
+    ⚠️ قاعدة البيانات تحتاج تحديثاً ({{ schema_alert.count }} ترحيلاً غير مطبَّق{% if schema_alert.missing %} · جداول مفقودة: {{ schema_alert.missing|join:", " }}{% endif %}).
+    <a href="{% url 'developer_page' %}#schema">فتح صفحة المطور لتطبيقها ←</a>
+  </div>
+  {% endif %}
   {% if messages %}
     <ul class="messages">
       {% for message in messages %}
