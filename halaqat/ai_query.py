@@ -739,7 +739,7 @@ def ask_llm(question, today, circle_names, api_key, model, http=None, timeout=30
 
 
 def ask_llm_with_settings(question, today, circle_names):
-    """نسخة جاهزة تقرأ المفتاح/العنوان/النموذج/البرومت من إعدادات المطور (ثم متغيّرات البيئة)."""
+    """نسخة جاهزة: المفتاح/العنوان/النموذج من **متغيّرات البيئة**، والبرومت من إعدادات المطور."""
     from .models import AISettings
     cfg = AISettings.load()
     return ask_llm(question, today, circle_names,
