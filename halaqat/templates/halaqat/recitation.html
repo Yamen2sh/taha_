@@ -86,9 +86,9 @@
 </div>
 
 <div class="rc-bar">
-  <form method="get" class="date-form" style="margin-top:0">
+  <form method="get" class="rc-dateform">
     <input type="hidden" name="circle" value="{{ circle.id }}">
-    <label class="rc-datelbl">تاريخ الجلسة</label>
+    <label class="rc-datelbl">📅 تاريخ الجلسة</label>
     <input type="date" name="date" value="{{ selected_date|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}">
     <button type="submit">عرض</button>
     {% if selected_date != today %}<a href="?circle={{ circle.id }}" class="rc-today">اليوم</a>{% endif %}
@@ -153,16 +153,20 @@
       </div>
 
       <div class="rc-side">
-        <div class="tristate compact">
-          {% for value, label in status_choices %}
-          <input type="radio" name="status_{{ r.student.id }}" id="present_{{ r.student.id }}_{{ value }}"
-                 value="{{ value }}" {% if r.status == value %}checked{% endif %}>
-          <label for="present_{{ r.student.id }}_{{ value }}" class="{{ value }}">{{ label }}</label>
-          {% endfor %}
-        </div>
-        <div class="rc-btns">
-          <button type="button" class="rc-add" data-open="{{ r.student.id }}">＋ تسميع</button>
-          <button type="button" class="qs-btn rc-stats" onclick="openQuickStats({{ r.student.id }})" title="إحصائيات سريعة وحضور آخر 4 أسابيع">📊</button>
+        {# الحضور في آخر 4 أسابيع: مربّع لكل أسبوع #}
+        {% include "halaqat/_history_strip.html" with hist=r.history %}
+        <div class="rc-actions">
+          <div class="tristate compact">
+            {% for value, label in status_choices %}
+            <input type="radio" name="status_{{ r.student.id }}" id="present_{{ r.student.id }}_{{ value }}"
+                   value="{{ value }}" {% if r.status == value %}checked{% endif %}>
+            <label for="present_{{ r.student.id }}_{{ value }}" class="{{ value }}">{{ label }}</label>
+            {% endfor %}
+          </div>
+          <div class="rc-btns">
+            <button type="button" class="qs-btn rc-stats" onclick="openQuickStats({{ r.student.id }})" title="إحصائيات سريعة وأيام حضور آخر 4 أسابيع">📊</button>
+            <button type="button" class="rc-add" data-open="{{ r.student.id }}">＋ تسميع</button>
+          </div>
         </div>
       </div>
     </div>

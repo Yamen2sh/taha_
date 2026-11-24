@@ -3172,6 +3172,10 @@ def recitation_page(request):
         attendance_by = dict(Attendance.objects.filter(
             student_id__in=ids, date=selected_date).values_list('student_id', 'status'))
 
+    # مربعات الحضور لآخر 4 أسابيع (أسبوع لكل صندوق) بجانب كل طالب
+    hist_by = (_attendance_history(Attendance, {'circle_id': circle['id']}, ids, today)
+               if (ids and circle) else {})
+
     rows = []
     for st in students:
         last = last_by.get(st.id)
@@ -3183,6 +3187,7 @@ def recitation_page(request):
             'birth_date': st.birth_date,
             'last_days_ago': (today - last.date).days if last else None,
             'items': day_by.get(st.id, []),
+            'history': hist_by.get(st.id),
         })
 
     counts = {
