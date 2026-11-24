@@ -1780,6 +1780,32 @@ def developer_page(request):
 
 @login_required
 @require_POST
+def developer_repair_migrations(request):
+    """
+    «إصلاح السجل»: يسجّل الترحيلات التي عناصرها (جداول/أعمدة) موجودة فعلاً
+    كمطبَّقة في django_migrations دون تنفيذها — يحل خطأ
+    «relation "…" already exists» نهائياً.
+    """
+    try:
+        recorded = schema_guard.record_satisfied_migrations()
+    except Exception as exc:                       # noqa: BLE001
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return JsonResponse({'ok': False, 'error': f'تعذّر الإصلاح: {exc}'}, status=400)
+        messages.error(request, f'❌ تعذّر إصلاح سجل الترحيلات: {exc}')
+        return redirect(reverse('developer_page') + '#schema')
+    status = schema_guard.schema_status()
+    _log_admin_action(request, f'🩹 إصلاح سجل الترحيلات: {", ".join(recorded) or "لا شيء"}')
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return JsonResponse({'ok': True, 'recorded': recorded, 'schema': status})
+    if recorded:
+        messages.success(request, f'✅ سُجّلت {len(recorded)} ترحيلاً كمطبَّق (عناصرها موجودة): {", ".join(recorded)}')
+    else:
+        messages.info(request, 'لا توجد ترحيلات تحتاج إصلاح سجل.')
+    return redirect(reverse('developer_page') + '#schema')
+
+
+@login_required
+@require_POST
 def developer_run_migrations(request):
     """
     يطبّق الترحيلات المعلّقة الآن (بديل فوري عن الانتظار حتى النشر التالي).
@@ -1788,9 +1814,14 @@ def developer_run_migrations(request):
     try:
         applied = schema_guard.apply_migrations()
     except Exception as exc:                       # noqa: BLE001 — نُبلّغ بدل 500
+        detail = str(exc)
+        hint = ''
+        if 'already exists' in detail.lower():
+            hint = (' — الجدول موجود فعلاً والترحيل غير مسجَّل. '
+                    'استخدم «🩹 إصلاح السجل» أو نفّذ: python manage.py smart_migrate')
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            return JsonResponse({'ok': False, 'error': f'فشل الترحيل: {exc}'}, status=400)
-        messages.error(request, f'❌ فشل تشغيل الترحيلات: {exc}')
+            return JsonResponse({'ok': False, 'error': f'فشل الترحيل: {detail}{hint}'}, status=400)
+        messages.error(request, f'❌ فشل تشغيل الترحيلات: {detail}{hint}')
         return redirect(reverse('developer_page') + '#schema')
     status = schema_guard.schema_status()
     _log_admin_action(request, f'🗂 تشغيل الترحيلات: {", ".join(applied) or "لا شيء معلّق"}')
