@@ -530,10 +530,10 @@ def _summarize(rows, group_by, people, month_cols):
 
 # ───────────────────────── الاتصال بالنموذج ─────────────────────────
 
-API_URL = 'https://api.anthropic.com/v1/messages'
+API_URL = 'https://api.anthropic.com/v1/messages'     # الافتراضي (يمكن تغييره من الإعدادات)
 TOOL_NAME = 'build_query'
 
-SYSTEM_PROMPT = """أنت مترجم أسئلة لنظام إحصائيات حضور حلقات القرآن في «مسجد طه». مهمتك الوحيدة: تحويل سؤال المستخدم إلى مواصفة استعلام منظّمة عبر الأداة build_query. لا تجب عن السؤال بنص، ولا تكتب SQL، ولا تخترع بيانات.
+DEFAULT_SYSTEM_PROMPT = """أنت مترجم أسئلة لنظام إحصائيات حضور حلقات القرآن في «مسجد طه». مهمتك الوحيدة: تحويل سؤال المستخدم إلى مواصفة استعلام منظّمة عبر الأداة build_query. لا تجب عن السؤال بنص، ولا تكتب SQL، ولا تخترع بيانات.
 
 تاريخ اليوم: {today} ({weekday}).
 الحلقات الموجودة (استخدم الأسماء حرفياً في الحقل circles): {circles}
@@ -561,6 +561,9 @@ SYSTEM_PROMPT = """أنت مترجم أسئلة لنظام إحصائيات حض
 - «رتّب الحلقات بنسبة الحضور» ⇒ group_by=circle, metrics=[rate, present, absent], sort_by=rate, sort_dir=desc
 - «نسبة حضور الأساتذة شهرياً» ⇒ subject=teachers, group_by=month, metrics=[rate, present, absent]
 - «كم آية سمّع الطلاب في حلقة أبي هذا الشهر؟» ⇒ group_by=person, metrics=[recitations, ayahs], circles=[«حلقة أبي»], sort_by=ayahs, sort_dir=desc"""
+
+# للتوافق مع الاستيرادات القديمة
+SYSTEM_PROMPT = DEFAULT_SYSTEM_PROMPT
 
 
 def build_tool_schema():
@@ -602,35 +605,123 @@ def build_tool_schema():
 _WEEKDAYS = ['الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت', 'الأحد']
 
 
-def build_request_body(question, today, circle_names, model):
+
+
+def provider_kind(base_url):
+    """
+    يحدّد شكل الطلب من عنوان الـ API:
+      • anthropic  → https://api.anthropic.com/v1
+      • openai     → أي وكيل متوافق (OpenAI، OpenRouter، Groq، Together، DeepSeek، vLLM، Ollama…)
+    """
+    url = (base_url or '').lower()
+    return 'anthropic' if 'anthropic.com' in url else 'openai'
+
+
+def _endpoint(base_url, kind):
+    base = (base_url or '').rstrip('/')
+    if kind == 'anthropic':
+        return base + ('/messages' if base.endswith('/v1') else '/v1/messages')
+    # OpenAI-compatible: يقبل https://host/v1 أو https://host كاملاً
+    return base + ('/chat/completions' if base.endswith('/v1') else '/v1/chat/completions')
+
+
+def build_request_body(question, today, circle_names, model, kind='anthropic', prompt=None):
+    """يبني جسم الطلب بحسب نوع المزوّد. البرومت يُعبَّأ بالتاريخ وأسماء الحلقات."""
+    system = (prompt or DEFAULT_SYSTEM_PROMPT).format(
+        today=today.isoformat(), weekday=_WEEKDAYS[today.weekday()],
+        circles='، '.join(circle_names) or '(لا توجد حلقات)')
+    schema = build_tool_schema()
+
+    if kind == 'anthropic':
+        return {
+            'model': model,
+            'max_tokens': 1024,
+            'system': system,
+            'messages': [{'role': 'user', 'content': question}],
+            'tools': [schema],
+            'tool_choice': {'type': 'tool', 'name': TOOL_NAME},
+        }
+
+    # OpenAI-compatible: نفس الأداة بصيغة function calling
     return {
         'model': model,
         'max_tokens': 1024,
-        'system': SYSTEM_PROMPT.format(today=today.isoformat(), weekday=_WEEKDAYS[today.weekday()],
-                                       circles='، '.join(circle_names) or '(لا توجد حلقات)'),
-        'messages': [{'role': 'user', 'content': question}],
-        'tools': [build_tool_schema()],
-        'tool_choice': {'type': 'tool', 'name': TOOL_NAME},
+        'messages': [{'role': 'system', 'content': system},
+                     {'role': 'user', 'content': question}],
+        'tools': [{'type': 'function', 'function': schema}],
+        'tool_choice': {'type': 'function', 'function': {'name': TOOL_NAME}},
     }
 
 
-def ask_llm(question, today, circle_names, api_key, model, http=None, timeout=30):
-    """يرسل السؤال (دون أي بيانات طلاب) ويعيد مواصفة خام. يرفع AssistantError برسالة عربية."""
+def _extract_spec_anthropic(data):
+    for block in data.get('content') or []:
+        if block.get('type') == 'tool_use' and block.get('name') == TOOL_NAME and isinstance(block.get('input'), dict):
+            return block['input']
+        if block.get('type') == 'text' and (block.get('text') or '').strip().startswith('{'):
+            try:
+                return json.loads(block['text'])
+            except ValueError:
+                pass
+    return None
+
+
+def _extract_spec_openai(data):
+    choices = data.get('choices') or []
+    if not choices:
+        return None
+    msg = choices[0].get('message') or {}
+    calls = msg.get('tool_calls') or []
+    for call in calls:
+        fn = (call.get('function') or {})
+        if fn.get('name') == TOOL_NAME and fn.get('arguments'):
+            try:
+                return json.loads(fn['arguments'])
+            except ValueError:
+                continue
+    content = (msg.get('content') or '').strip()
+    if content.startswith('{'):
+        try:
+            return json.loads(content)
+        except ValueError:
+            pass
+    return None
+
+
+def ask_llm(question, today, circle_names, api_key, model, http=None, timeout=30,
+            base_url=None, prompt=None):
+    """
+    يرسل السؤال (دون أي بيانات طلاب) ويعيد مواصفة خام.
+    يعمل مع أي مزوّد/وكيل: Anthropic أو أي API متوافق مع OpenAI — يُحدَّد تلقائياً من العنوان.
+    يرفع AssistantError برسالة عربية.
+    """
+    from django.conf import settings
+    base_url = base_url or getattr(settings, 'AI_BASE_URL', '') or 'https://api.anthropic.com/v1'
     if not api_key:
-        raise AssistantError('ميزة السؤال بالذكاء الاصطناعي غير مفعّلة. أضف المتغيّر ANTHROPIC_API_KEY في إعدادات الخادم '
-                             '(يمكنك الآن استخدام «تعديل التفسير» لبناء الاستعلام يدوياً).', 'no_key')
+        raise AssistantError('ميزة السؤال بالذكاء الاصطناعي غير مفعّلة. اضبط مفتاح الـ API من '
+                             '«المطور ← 🤖 الذكاء الاصطناعي» أو المتغيّر AI_API_KEY '
+                             '(ويمكنك الآن استخدام «تعديل التفسير» لبناء الاستعلام يدوياً).', 'no_key')
     if http is None:
         import requests as http
+
+    kind = provider_kind(base_url)
+    url = _endpoint(base_url, kind)
+    headers = {'content-type': 'application/json'}
+    if kind == 'anthropic':
+        headers.update({'x-api-key': api_key, 'anthropic-version': '2023-06-01'})
+    else:
+        headers['authorization'] = f'Bearer {api_key}'
+
+    body = build_request_body(question, today, circle_names, model, kind=kind, prompt=prompt)
     try:
-        resp = http.post(API_URL, timeout=timeout, headers={
-            'x-api-key': api_key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json',
-        }, json=build_request_body(question, today, circle_names, model))
+        resp = http.post(url, timeout=timeout, headers=headers, json=body)
     except Exception as e:                       # noqa: BLE001 — مهلة/شبكة
-        logger.warning('تعذّر الاتصال بخدمة الذكاء الاصطناعي: %s', e)
-        raise AssistantError('تعذّر الاتصال بخدمة الذكاء الاصطناعي الآن. حاول بعد قليل.', 'network')
+        logger.warning('تعذّر الاتصال بخدمة الذكاء الاصطناعي (%s): %s', url, e)
+        raise AssistantError('تعذّر الاتصال بخدمة الذكاء الاصطناعي الآن. تحقّق من عنوان الـ API أو حاول بعد قليل.', 'network')
     status = getattr(resp, 'status_code', 0)
     if status in (401, 403):
-        raise AssistantError('مفتاح الذكاء الاصطناعي غير صالح أو منتهٍ. راجع ANTHROPIC_API_KEY.', 'auth')
+        raise AssistantError('مفتاح الذكاء الاصطناعي غير صالح أو منتهٍ. راجع إعدادات «المطور ← الذكاء الاصطناعي».', 'auth')
+    if status == 404:
+        raise AssistantError('عنوان الـ API أو اسم النموذج غير صحيح (404). راجع الإعدادات.', 'api')
     if status == 429:
         raise AssistantError('الخدمة مشغولة حالياً (تجاوز حدّ الطلبات). جرّب بعد دقيقة.', 'rate')
     if status >= 400:
@@ -640,10 +731,21 @@ def ask_llm(question, today, circle_names, api_key, model, http=None, timeout=30
         data = resp.json()
     except ValueError:
         raise AssistantError('استجابة غير مفهومة من الخدمة.', 'api')
-    for block in data.get('content') or []:
-        if block.get('type') == 'tool_use' and block.get('name') == TOOL_NAME and isinstance(block.get('input'), dict):
-            return block['input']
+
+    spec = _extract_spec_anthropic(data) if kind == 'anthropic' else _extract_spec_openai(data)
+    if isinstance(spec, dict):
+        return spec
     raise AssistantError('لم أتمكن من تحويل السؤال إلى استعلام. أعد صياغته أو استخدم «تعديل التفسير».', 'parse')
+
+
+def ask_llm_with_settings(question, today, circle_names):
+    """نسخة جاهزة تقرأ المفتاح/العنوان/النموذج/البرومت من إعدادات المطور (ثم متغيّرات البيئة)."""
+    from .models import AISettings
+    cfg = AISettings.load()
+    return ask_llm(question, today, circle_names,
+                   cfg.effective_key(), cfg.effective_model(),
+                   base_url=cfg.effective_base_url(), prompt=cfg.prompt_for(
+                       today, circle_names, _WEEKDAYS[today.weekday()]))
 
 
 # ───────────────────────── بيانات واجهة المستخدم ─────────────────────────

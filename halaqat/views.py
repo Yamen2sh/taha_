@@ -3,6 +3,7 @@ import datetime
 import io
 import json
 import logging
+import os
 import re
 from random import randint
 import threading
@@ -16,7 +17,7 @@ from django.http import JsonResponse, HttpResponse
 from django.urls import reverse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import Count
 from django.views.decorators.http import require_POST
 
@@ -24,6 +25,7 @@ from . import ai_export, ai_query, cache_utils, quran
 from .models import (
     Teacher, Circle, Student, Attendance, TeacherAttendance,
     Course, CourseAttendance, CourseTeacherAttendance, TeacherDailyAttendance, Sabr, Recitation, AssistantQuery,
+    AISettings,
 )
 from .forms import CircleForm, StudentForm, CourseForm, WhatsAppAbsentForm, ViewerAccountForm
 from .roles import VIEWER_GROUP, is_viewer
@@ -145,11 +147,12 @@ def help_page(request):
     return render(request, 'halaqat/help.html', {'active_nav': 'help'})
 
 
-@login_required
-def circles_list(request):
-    """بطاقات الحلقات: البيانات الثابتة من الكاش + استعلامان مجمّعان فقط لحضور اليوم."""
+def _circles_overview():
+    """
+    بيانات بطاقات الحلقات (تُستخدم في «الدورات القرآنية» بعد دمج تبويب «الحلقات»).
+    البيانات الثابتة من الكاش + استعلامان مجمّعان فقط لحضور اليوم.
+    """
     from collections import Counter
-    from django.db.models import Count
     circles = cache_utils.circles()
     today = timezone.now().date()
 
@@ -191,16 +194,18 @@ def circles_list(request):
             'progress_total': total,
             'progress_recorded': recorded,
         })
-
-    context = {
+    return {
         'circle_cards': circle_cards,
         'total_circles': len(circles),
         'total_students': sum(c['students'] for c in circles),
         'today': today,
-        'active_nav': 'circles',
     }
-    return render(request, 'halaqat/circles_list.html', context)
 
+
+@login_required
+def circles_list(request):
+    """«الحلقات» صارت جزءاً من «الدورات القرآنية»: نفس المحتوى على المسار الجديد."""
+    return redirect(reverse('recitation_page') + '#circles', permanent=True)
 
 
 HISTORY_WEEKS = 4   # عدد الأسابيع السابقة المعروضة مباشرة بجانب كل طالب
@@ -965,28 +970,109 @@ def students_index(request):
 # ============================================================
 
 def _student_month_grid(student, days=28):
-    """آخر `days` يوماً (4 أسابيع) تنتهي باليوم الحالي، مع حالة حضور الطالب في كل يوم."""
+    """
+    آخر `days` يوماً (4 أسابيع) تنتهي باليوم الحالي.
+    تُرجَع **أيام الحضور الفعلية فقط** (مسجَّلة بحالة) مع اسم اليوم والتاريخ،
+    لأن تصدير الصورة يعرض الأيام المسجَّلة فقط لا الشبكة الفارغة.
+    ويُضاف لكل يوم: صفحات التسميع والأسابير المسجَّلة فيه.
+    """
     from datetime import timedelta
+    from collections import defaultdict
+
     today = timezone.localdate()
     start = today - timedelta(days=days - 1)
-    by_date = {
-        r.date: r.status
-        for r in Attendance.objects.filter(student=student, date__gte=start, date__lte=today)
-    }
+
+    records = list(Attendance.objects.filter(student=student, date__gte=start, date__lte=today)
+                   .order_by('date'))
+    by_date = {r.date: r.status for r in records}
+
+    # صفحات التسميع لكل يوم (مجموع نطاق الصفحات)
+    pages_by_date = defaultdict(int)
+    for rec in Recitation.objects.filter(student=student, date__gte=start, date__lte=today):
+        pages_by_date[rec.date] += rec.page_span or 0
+    # أسابير كل يوم
+    sabr_by_date = dict(Sabr.objects.filter(student=student, date__gte=start, date__lte=today)
+                        .values('date').annotate(n=Count('id')).values_list('date', 'n'))
+
+    WEEKDAYS = ['الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت', 'الأحد']
     cells = []
-    counts = {'present': 0, 'late': 0, 'absent': 0, 'excused': 0, 'none': 0}
-    for i in range(days):
-        d = start + timedelta(days=i)
-        status = by_date.get(d)
-        counts[status or 'none'] += 1
-        cells.append({'date': d, 'day': d.day, 'status': status, 'is_today': d == today})
+    counts = {'present': 0, 'late': 0, 'absent': 0, 'excused': 0}
+    for d in sorted(by_date):
+        status = by_date[d]
+        counts[status] = counts.get(status, 0) + 1
+        cells.append({
+            'date': d,
+            'day': d.day,
+            'weekday': WEEKDAYS[d.weekday()],
+            'status': status,
+            'is_today': d == today,
+            'pages': pages_by_date.get(d, 0),
+            'sabr': sabr_by_date.get(d, 0),
+        })
+
+    # ── تدرّج لون الطالب حسب حضور الشهر الماضي (أصفر ← أحمر) ──
+    grade = _attendance_color_grade(student, today)
     return {
         'cells': cells,
         'counts': counts,
+        'noted': len(cells),
         'total': days,
         'start': start,
         'end': today,
+        'grade': grade,
     }
+
+
+def _attendance_color_grade(student, today=None, days=30):
+    """
+    تدرّج لون الطالب حسب نسبة حضوره في آخر شهر (30 يوماً):
+
+      • «جديد» — عمره في الحلقة أقل من شهر، أو لا توجد أي أيام مسجَّلة له بعد.
+        (لون نقطة مميّز: بنفسجي) — لا يُحسب له تدرّج.
+      • وإلا فالنسبة = (حاضر + متأخر) ÷ (المسجَّل − بإذن):
+          100–60%  → أصفر (سليم)
+          60–40%   → برتقالي
+          40–20%   → برتقالي غامق
+          20–0%    → أحمر
+    يعيد قاموساً: {grade, rate, label, color, is_new, sessions, attended}
+    """
+    from datetime import timedelta
+    today = today or timezone.localdate()
+    start = today - timedelta(days=days - 1)
+    joined = getattr(student, 'created_at', None) or getattr(student, 'joined_at', None)
+    qs = Attendance.objects.filter(student=student, date__gte=start, date__lte=today)
+    agg = qs.values('status').annotate(n=Count('id'))
+    tally = {row['status']: row['n'] for row in agg}
+    attended = tally.get('present', 0) + tally.get('late', 0)
+    excused = tally.get('excused', 0)
+    sessions = sum(tally.values())
+    counted = sessions - excused
+
+    is_new = False
+    if joined is not None:
+        try:
+            if (today - joined.date()).days < days:
+                is_new = True
+        except Exception:
+            pass
+    if counted == 0:
+        is_new = True
+
+    if is_new:
+        return {'grade': 'new', 'rate': None, 'label': 'جديد', 'color': '#7A5AA8',
+                'is_new': True, 'sessions': sessions, 'attended': attended}
+
+    rate = round(attended * 100 / counted)
+    if rate >= 60:
+        grade, label, color = 'yellow', 'منتظم', '#E0B33A'
+    elif rate >= 40:
+        grade, label, color = 'orange', 'متوسّط', '#E08C33'
+    elif rate >= 20:
+        grade, label, color = 'deep', 'متعثّر', '#D2603A'
+    else:
+        grade, label, color = 'red', 'خطر', '#C0392B'
+    return {'grade': grade, 'rate': rate, 'label': label, 'color': color,
+            'is_new': False, 'sessions': sessions, 'attended': attended}
 
 
 @login_required
@@ -1675,14 +1761,210 @@ def migrate_sqlite_to_postgres(request):
 
 @login_required
 def developer_page(request):
-    """صفحة المطور: تبويبات (تلغرام، تصدير Excel، استيراد Excel، معلومات قاعدة البيانات)."""
+    """صفحة المطور: تلغرام، Excel، SQLite، الذكاء الاصطناعي، الكاش."""
     pg_stats = _db_counts()
+    from .ai_query import DEFAULT_SYSTEM_PROMPT
+    ai_cfg = AISettings.load()
     return render(request, 'halaqat/developer.html', {
         'active_nav': 'developer',
         'pg_stats': pg_stats,
         'total_pg': sum(c for _, c in pg_stats),
         'cache_status': cache_utils.status(),
+        'ai': ai_cfg,
+        'ai_default_prompt': DEFAULT_SYSTEM_PROMPT,
+        'ai_effective': {
+            'key': bool(ai_cfg.effective_key()),
+            'base_url': ai_cfg.effective_base_url(),
+            'model': ai_cfg.effective_model(),
+            'from_env': not (ai_cfg.api_key or ai_cfg.base_url or ai_cfg.model),
+        },
+        'db_engine': connection.vendor,
     })
+
+
+@login_required
+def developer_sqlite_export(request):
+    """ينزّل ملف SQLite يحوي نسخة كاملة من كل بيانات التطبيق (بمفاتيحها الأصلية)."""
+    from . import sqlite_transfer
+    path = sqlite_transfer.temp_backup_path('sqlite3')
+    try:
+        counts = sqlite_transfer.export_to_file(path)
+        with open(path, 'rb') as fh:
+            data = fh.read()
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+    stamp = timezone.localtime().strftime('%Y%m%d_%H%M')
+    total = sum(counts.values())
+    _log_admin_action(request, f'🗄 تصدير SQLite كامل: {total} سجل')
+    resp = HttpResponse(data, content_type='application/vnd.sqlite3')
+    resp['Content-Disposition'] = f'attachment; filename="masjid_taha_{stamp}.sqlite3"'
+    resp['X-Row-Counts'] = json.dumps(counts, ensure_ascii=False)[:1000]
+    return resp
+
+
+@login_required
+@require_POST
+def developer_sqlite_import(request):
+    """يستورد ملف SQLite **باستبدال كامل** لكل البيانات (ذرّياً)، ويُبقي إعدادات الذكاء الاصطناعي."""
+    from . import sqlite_transfer
+    is_ajax = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+    upload = request.FILES.get('sqlite_file')
+    if not upload:
+        err = '❌ لم يتم رفع أي ملف — اختر ملف SQLite أولاً.'
+        if is_ajax:
+            return JsonResponse({'ok': False, 'error': err}, status=400)
+        messages.error(request, err)
+        return redirect(reverse('developer_page') + '#sqlite')
+    if upload.size > 64 * 1024 * 1024:
+        err = '❌ حجم الملف أكبر من 64 ميغابايت.'
+        if is_ajax:
+            return JsonResponse({'ok': False, 'error': err}, status=400)
+        messages.error(request, err)
+        return redirect(reverse('developer_page') + '#sqlite')
+
+    path = sqlite_transfer.temp_backup_path('sqlite3')
+    try:
+        with open(path, 'wb') as fh:
+            for chunk in upload.chunks():
+                fh.write(chunk)
+        try:
+            counts = sqlite_transfer.import_from_file(path)
+        except ValueError as exc:
+            err = f'❌ {exc}'
+            if is_ajax:
+                return JsonResponse({'ok': False, 'error': err}, status=400)
+            messages.error(request, err)
+            return redirect(reverse('developer_page') + '#sqlite')
+        except Exception as exc:                       # noqa: BLE001 — نُبلّغ ونتراجع تلقائياً
+            err = f'❌ فشل الاستيراد — تم التراجع عن كل التغييرات: {exc}'
+            _log_admin_action(request, f'❌ فشل استيراد SQLite: {exc}')
+            if is_ajax:
+                return JsonResponse({'ok': False, 'error': err}, status=400)
+            messages.error(request, err)
+            return redirect(reverse('developer_page') + '#sqlite')
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+    cache_utils.invalidate_all()                      # بيانات جديدة كلياً → أبطِل الكاش
+    total = sum(counts.values())
+    _log_admin_action(request, f'🗄 استيراد SQLite كامل (استبدال): {total} سجل')
+    if is_ajax:
+        return JsonResponse({'ok': True, 'results': counts, 'total': total})
+    messages.success(request, f'✅ تم استيراد {total} سجلاً من ملف SQLite (استبدال كامل).')
+    return redirect(reverse('developer_page') + '#sqlite')
+
+
+@login_required
+@require_POST
+def developer_fill_defaults(request):
+    """
+    ملء الخانات الفارغة بقيم افتراضية — دفعة واحدة ذرّية (استعلامات UPDATE محدودة العدد).
+    الخانات الفارغة نوعان: نصية فارغة ('' / NULL) وحقول رقمية/تاريخية NULL غير مطلوبة.
+    """
+    from django.db.models import Q, Value
+    from django.db.models.functions import Coalesce
+    results = []
+    with transaction.atomic():
+        # 1) الهواتف والملاحظات والوصف (نصّية)
+        text_defaults = [
+            (Teacher, 'phone', '-'),
+            (Student, 'phone', '-'),
+            (Student, 'notes', '-'),
+            (Circle, 'description', '-'),
+            (Course, 'description', '-'),
+        ]
+        for model, field, default in text_defaults:
+            qs = model.objects.filter(Q(**{f'{field}__isnull': True}) | Q(**{field: ''}))
+            n = qs.update(**{field: default})
+            if n:
+                results.append((f'{model._meta.verbose_name} · {model._meta.get_field(field).verbose_name}', n))
+
+        # 2) تواريخ الميلاد الناقصة: نضع بداية السنة الدراسية الافتراضية (1 يناير من 12 سنة مضت)
+        default_birth = timezone.localdate().replace(year=timezone.localdate().year - 12, month=1, day=1)
+        n = Student.objects.filter(birth_date__isnull=True).update(birth_date=default_birth)
+        if n:
+            results.append(('الطلاب · تاريخ الميلاد', n))
+
+        # 3) حلقة للطلاب بلا حلقة (نادر جداً بعد الحاوية) — نستخدم أول حلقة
+        first_circle = Circle.objects.order_by('display_order', 'id').first()
+        if first_circle:
+            n = Student.objects.filter(circle__isnull=True).update(circle=first_circle)
+            if n:
+                results.append(('الطلاب · الحلقة', n))
+
+        # 4) التسميع: الصفحات الناقصة تُشتق من نطاق الآيات (bulk_update واحد)
+        from . import quran
+        fixed = []
+        for rec in Recitation.objects.filter(Q(from_page__isnull=True) | Q(to_page__isnull=True)) \
+                .only('id', 'from_page', 'to_page', 'from_surah', 'from_ayah', 'to_surah', 'to_ayah'):
+            try:
+                rec.from_page = rec.from_page or quran.page_of(rec.from_surah, rec.from_ayah)
+                rec.to_page = rec.to_page or quran.page_of(rec.to_surah, rec.to_ayah)
+            except Exception:
+                continue
+            fixed.append(rec)
+        if fixed:
+            Recitation.objects.bulk_update(fixed, ['from_page', 'to_page'], batch_size=500)
+            results.append(('التسميع · الصفحات', len(fixed)))
+
+        # 5) مسودات التسميع الناقصة (بدون نطاق آيات) تُحذف لأنها غير قابلة للعرض
+        n, _ = Recitation.objects.filter(Q(from_surah__isnull=True) | Q(to_surah__isnull=True)).delete()
+        if n:
+            results.append(('سجلات تسميع ناقصة حُذفت', n))
+    cache_utils.invalidate_all()
+
+    total = sum(c for _, c in results)
+    _log_admin_action(request, f'🧹 ملء الخانات الفارغة: {total} خانة')
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return JsonResponse({'ok': True, 'results': results, 'total': total})
+    if total:
+        messages.success(request, f'✅ تم ملء {total} خانة فارغة بقيم افتراضية.')
+    else:
+        messages.info(request, 'لا توجد خانات فارغة تحتاج ملءً.')
+    return redirect(reverse('developer_page') + '#defaults')
+
+
+@login_required
+@require_POST
+def developer_ai_save(request):
+    """حفظ إعدادات الذكاء الاصطناعي (مفتاح أي وكيل + العنوان + النموذج + البرومت)."""
+    cfg = AISettings.load()
+    cfg.api_key = (request.POST.get('api_key') or '').strip()[:255]
+    cfg.base_url = (request.POST.get('base_url') or '').strip()[:255]
+    cfg.model = (request.POST.get('model') or '').strip()[:120]
+    prompt = (request.POST.get('prompt') or '').strip()
+    from .ai_query import DEFAULT_SYSTEM_PROMPT
+    cfg.prompt = prompt or DEFAULT_SYSTEM_PROMPT
+    cfg.save()
+    if request.POST.get('reset_prompt'):
+        cfg.prompt = DEFAULT_SYSTEM_PROMPT
+        cfg.save(update_fields=['prompt'])
+    _log_admin_action(request, '🤖 تعديل إعدادات المساعد الإحصائي')
+    return JsonResponse({'ok': True, 'model': cfg.effective_model(), 'base_url': cfg.effective_base_url(),
+                         'has_key': bool(cfg.effective_key())})
+
+
+@login_required
+@require_POST
+def developer_ai_test(request):
+    """اختبار سريع للاتصال: يرسل سؤالاً بسيطاً ويتحقق من إرجاع مواصفة صالحة."""
+    cfg = AISettings.load()
+    if not cfg.effective_key():
+        return JsonResponse({'ok': False, 'error': 'لم يُضبط مفتاح API بعد'}, status=400)
+    circles = cache_utils.circles()
+    names = [c['name'] for c in circles]
+    today = timezone.localdate()
+    try:
+        raw = ai_query.ask_llm('من الأكثر غياباً هذا الشهر؟', today, names, cfg.effective_key(),
+                               cfg.effective_model(), base_url=cfg.effective_base_url(),
+                               prompt=cfg.prompt_for(today, names, ai_query._WEEKDAYS[today.weekday()]),
+                               timeout=25)
+    except ai_query.AssistantError as e:
+        return JsonResponse({'ok': False, 'code': e.code, 'error': e.message}, status=200)
+    return JsonResponse({'ok': True, 'model': cfg.effective_model(), 'base_url': cfg.effective_base_url(),
+                         'spec': ai_query.spec_to_json(raw)[:400]})
 
 
 @login_required
@@ -2519,15 +2801,43 @@ def sort_students_page(request):
         if cur is None or (date, rid) > (cur[0], cur[1]):
             last[sid] = (date, rid, to_page, ts, ta)
 
+    # نسبة الحضور في آخر شهر لكل طالب (استعلام واحد) — لتلوين البطاقات تدريجياً أصفر ← أحمر
+    from datetime import timedelta
+    month_start = timezone.localdate() - timedelta(days=29)
+    tally = {}
+    for sid, st, n in (Attendance.objects.filter(date__gte=month_start).order_by()
+                       .values('student_id', 'status').annotate(n=Count('id'))
+                       .values_list('student_id', 'status', 'n')):
+        tally.setdefault(sid, {})[st] = n
+
+    def grade_of(sid, joined):
+        """تدرّج اللون حسب حضور آخر شهر + شارة «جديد» للطلاب الجدد أو بلا سجلات."""
+        t = tally.get(sid, {})
+        attended = t.get('present', 0) + t.get('late', 0)
+        counted = sum(t.values()) - t.get('excused', 0)
+        if joined is not None and (timezone.localdate() - joined).days < 30:
+            return {'grade': 'new', 'rate': None, 'label': 'جديد', 'color': '#7A5AA8'}
+        if counted == 0:
+            return {'grade': 'new', 'rate': None, 'label': 'جديد', 'color': '#7A5AA8'}
+        rate = round(attended * 100 / counted)
+        if rate >= 60:
+            return {'grade': 'yellow', 'rate': rate, 'label': 'منتظم', 'color': '#E0B33A'}
+        if rate >= 40:
+            return {'grade': 'orange', 'rate': rate, 'label': 'متوسّط', 'color': '#E08C33'}
+        if rate >= 20:
+            return {'grade': 'deep', 'rate': rate, 'label': 'متعثّر', 'color': '#D2603A'}
+        return {'grade': 'red', 'rate': rate, 'label': 'خطر', 'color': '#C0392B'}
+
     by_circle, parked = {c.id: [] for c in circles}, []
     total = 0
-    for sid, name, cid, birth, parked_at in (Student.objects.order_by('name')
-            .values_list('id', 'name', 'circle_id', 'birth_date', 'parked_at')):
+    for sid, name, cid, birth, parked_at, joined in (Student.objects.order_by('name')
+            .values_list('id', 'name', 'circle_id', 'birth_date', 'parked_at', 'joined_at')):
         rec = last.get(sid)
         card = {'id': sid, 'name': name,
                 'last_page': (rec[2] or page_of(rec[3], rec[4])) if rec else None,
                 'birth_year': birth.year if birth else None,
-                'parked': parked_at is not None}
+                'parked': parked_at is not None,
+                'grade': grade_of(sid, joined.date() if joined else None)}
         total += 1
         if parked_at is not None:
             parked.append(card)
@@ -2865,8 +3175,10 @@ def recitation_page(request):
         ta = TeacherAttendance.objects.filter(teacher=day_teacher, circle_id=circle['id'], date=selected_date).first()
         teacher_status = ta.status if ta else ''
 
+    overview = _circles_overview()      # بطاقات الحلقات + الإحصائيات (كانت في تبويب «الحلقات»)
     return render(request, 'halaqat/recitation.html', {
         'active_nav': 'recitation',
+        **overview,
         'circles': circles, 'circle': circle, 'prev_circle': prev_circle, 'next_circle': next_circle,
         'rows': rows,
         'counts': counts,
@@ -2981,7 +3293,7 @@ def stats_assistant_page(request):
     } for h in AssistantQuery.objects.filter(user=request.user.get_username()).order_by('-created_at', '-id')[:12] if h.spec]
     return render(request, 'halaqat/stats_assistant.html', {
         'active_nav': 'stats',
-        'ai_enabled': bool(getattr(settings, 'ANTHROPIC_API_KEY', '')),
+        'ai_enabled': bool(AISettings.load().effective_key()),
         'meta': ai_query.ui_meta(circles),
         'examples': ai_query.EXAMPLES,
         'history': history,
@@ -3010,18 +3322,23 @@ def stats_assistant_ask(request):
         return JsonResponse({'ok': False, 'error': 'اكتب سؤالك أولاً'}, status=400)
     if len(question) > 500:
         return JsonResponse({'ok': False, 'error': 'السؤال طويل (الحد 500 حرف)'}, status=400)
-    api_key = getattr(settings, 'ANTHROPIC_API_KEY', '')
+    ai_cfg = AISettings.load()
+    api_key = ai_cfg.effective_key()
     if not api_key:
         return JsonResponse({'ok': False, 'code': 'no_key',
-                             'error': 'ميزة السؤال بالذكاء الاصطناعي غير مفعّلة (لم يُضبط ANTHROPIC_API_KEY). استخدم «بناء يدوي».'}, status=503)
+                             'error': 'ميزة السؤال بالذكاء الاصطناعي غير مفعّلة (لم يُضبط مفتاح الـ API). '
+                                      'اضبطه من «المطور ← 🤖 الذكاء الاصطناعي» أو استخدم «بناء يدوي».'}, status=503)
     limit = getattr(settings, 'ASSISTANT_RATE_LIMIT_PER_HOUR', 30)
     if not cache_utils.rate_limit(f'assistant:{request.user.get_username()}', limit):
         return JsonResponse({'ok': False, 'code': 'rate',
                              'error': f'بلغتَ الحد ({limit} سؤالاً في الساعة). جرّب لاحقاً أو استخدم «بناء يدوي».'}, status=429)
     circles = cache_utils.circles()
+    names = [c['name'] for c in circles]
+    today = timezone.localdate()
     try:
-        raw = ai_query.ask_llm(question, timezone.localdate(), [c['name'] for c in circles], api_key,
-                               getattr(settings, 'ANTHROPIC_MODEL', 'claude-haiku-5-5'))
+        raw = ai_query.ask_llm(question, today, names, api_key, ai_cfg.effective_model(),
+                               base_url=ai_cfg.effective_base_url(),
+                               prompt=ai_cfg.prompt_for(today, names, ai_query._WEEKDAYS[today.weekday()]))
     except ai_query.AssistantError as e:
         _assistant_log(request, question, None, 'ai', 0, False, e.message)
         return JsonResponse({'ok': False, 'code': e.code, 'error': e.message}, status=502 if e.code in ('network', 'api') else 400)

@@ -519,3 +519,63 @@ class AssistantQuery(models.Model):
 
     def __str__(self):
         return f'{self.user}: {self.question or "(تعديل يدوي)"}'
+
+
+class AISettings(models.Model):
+    """
+    إعدادات المساعد الإحصائي (صف واحد فقط، يُحرَّر من «المطور ← 🤖 الذكاء الاصطناعي»).
+
+    • api_key / base_url / model: أي مزوّد أو وكيل متوافق (OpenAI-compatible أو Anthropic).
+      إن تُركت فارغة يُستخدم ما في متغيّرات البيئة (AI_API_KEY / AI_BASE_URL / AI_MODEL).
+    • prompt: نص البرومت (system prompt) المستخدم فعلياً — يُملأ تلقائياً بالنص الافتراضي
+      المضمّن في ai_query.DEFAULT_SYSTEM_PROMPT أول مرة، ويمكن تعديله من الصفحة.
+    """
+
+    name = models.CharField('الاسم', max_length=20, default='default', unique=True)
+    api_key = models.CharField('مفتاح API', max_length=255, blank=True, default='')
+    base_url = models.CharField('عنوان الـ API', max_length=255, blank=True, default='')
+    model = models.CharField('اسم النموذج', max_length=120, blank=True, default='')
+    prompt = models.TextField('البرومت (system prompt)', blank=True, default='')
+    updated_at = models.DateTimeField('آخر تعديل', auto_now=True)
+
+    class Meta:
+        verbose_name = 'إعدادات الذكاء الاصطناعي'
+        verbose_name_plural = 'إعدادات الذكاء الاصطناعي'
+
+    def __str__(self):
+        return 'إعدادات الذكاء الاصطناعي'
+
+    @classmethod
+    def load(cls):
+        """يعيد الصف الوحيد (وينشئه بالبرومت الافتراضي إن لم يكن موجوداً)."""
+        obj, created = cls.objects.get_or_create(name='default')
+        if created or not obj.prompt:
+            from .ai_query import DEFAULT_SYSTEM_PROMPT
+            obj.prompt = DEFAULT_SYSTEM_PROMPT
+            obj.save(update_fields=['prompt'])
+        return obj
+
+    # ── القيم الفعّالة (قاعدة البيانات تتقدّم، ثم متغيّرات البيئة) ──
+    def effective_key(self):
+        from django.conf import settings
+        return self.api_key.strip() or getattr(settings, 'AI_API_KEY', '')
+
+    def effective_base_url(self):
+        from django.conf import settings
+        return (self.base_url.strip() or getattr(settings, 'AI_BASE_URL', '')
+                or 'https://api.anthropic.com/v1')
+
+    def effective_model(self):
+        from django.conf import settings
+        return self.model.strip() or getattr(settings, 'AI_MODEL', '') or 'claude-haiku-5-5'
+
+    def prompt_for(self, today, circle_names, weekday):
+        """البرومت النهائي بعد تعبئة التاريخ وأسماء الحلقات."""
+        from .ai_query import SYSTEM_PROMPT
+        template = self.prompt or SYSTEM_PROMPT
+        try:
+            return template.format(today=today.isoformat(), weekday=weekday,
+                                   circles='، '.join(circle_names) or '(لا توجد حلقات)')
+        except (KeyError, IndexError, ValueError):
+            # البرومت عُدِّل وفيه أقواس غير متوازنة → نستخدمه كما هو
+            return template

@@ -558,6 +558,40 @@ button, input, select, textarea { font-family: inherit; }
 .s-none{background:#ccc}
 .att-sum{margin-top:10px;font-size:12px;color:#7a6a55;line-height:1.8}
 
+/* ===== أيام الحضور الفعلية فقط (مع اسم اليوم والتاريخ) ===== */
+.att-days{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:8px}
+.att-day{background:var(--bg);border:1.5px solid var(--accent-light);border-radius:11px;padding:7px 6px 8px;text-align:center}
+.att-day.today{outline:2px solid var(--primary);outline-offset:1px}
+.att-day.s-present{border-color:var(--success)}
+.att-day.s-late{border-color:var(--warning)}
+.att-day.s-absent{border-color:var(--error)}
+.att-day.s-excused{border-color:#6B8CAE}
+.att-day-h{display:flex;flex-direction:column;line-height:1.35;margin-bottom:5px}
+.att-day-h b{font-size:11.5px;color:var(--ink);font-weight:700}
+.att-day-h span{font-size:10.5px;color:#9c8a71;direction:ltr}
+.att-day-b{display:flex;align-items:center;justify-content:center;gap:5px;flex-wrap:wrap;min-height:16px}
+.att-day-b u{display:inline-block;width:26px;height:6px;border-radius:3px;text-decoration:none}
+.att-day-b em{font-style:normal;font-size:10px;color:#7a6a55;background:#fff;border:1px solid var(--accent-light);
+  border-radius:6px;padding:0 4px;line-height:1.5;white-space:nowrap}
+
+/* شارة تدرّج الطالب حسب حضور الشهر (أصفر ← أحمر) */
+.att-grade-badge{display:inline-block;margin-right:8px;font-size:11px;font-weight:700;color:#fff;
+  border-radius:20px;padding:2px 9px;vertical-align:middle}
+.att-grade-badge.grade-yellow{background:#E0B33A;color:#4A3420}
+.att-grade-badge.grade-orange{background:#E08C33}
+.att-grade-badge.grade-deep{background:#D2603A}
+.att-grade-badge.grade-red{background:#C0392B}
+.att-grade-badge.grade-new{background:#7A5AA8}
+
+/* نقطة لون الطالب داخل الحاويات (الفرز) + شارة «جديد» */
+.att-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-left:5px;vertical-align:middle;
+  border:1px solid rgba(0,0,0,.12)}
+.att-dot.g-yellow{background:#E0B33A}.att-dot.g-orange{background:#E08C33}
+.att-dot.g-deep{background:#D2603A}.att-dot.g-red{background:#C0392B}
+.att-dot.g-new{background:#7A5AA8;box-shadow:0 0 0 3px rgba(122,90,168,.18)}
+.new-badge{display:inline-block;font-size:9.5px;font-weight:700;color:#fff;background:#7A5AA8;
+  border-radius:8px;padding:0 5px;margin-right:4px;line-height:1.65;vertical-align:middle}
+
 /* نافذة الإحصائيات السريعة */
 .qs-btn{border:none;background:var(--bg-alt);color:var(--primary-dark);border-radius:8px;padding:2px 8px;
   font-size:12px;cursor:pointer;margin-right:6px;font-family:inherit}
@@ -1087,3 +1121,14 @@ label.shake{animation:shakeX .3s 2}
 .ai-hist:hover{background:#fff;border-color:var(--primary)}
 .ai-hist-q{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ai-hist-t{font-size:11px;color:#9c8a71;flex-shrink:0}
+
+/* ===== إضافة سريعة داخل الحاويات (طالب / أستاذ) ===== */
+.dn-quickadd{display:flex;gap:6px;padding:6px 8px;flex-wrap:wrap}
+.dn-quickadd-btn{flex:1;min-width:74px;border:1px dashed var(--primary);background:#fdfaf5;color:var(--primary-dark);
+  border-radius:8px;padding:5px 6px;font-size:12px;font-family:inherit;cursor:pointer;font-weight:700}
+.dn-quickadd-btn:hover{background:#f6ecdd}
+.dn-quickadd-btn:disabled{opacity:.5;cursor:default}
+
+/* أزرار صف الدورات القرآنية (تسميع + إحصائيات سريعة) */
+.rc-btns{display:flex;gap:6px;align-items:center;margin-top:6px}
+.rc-btns .rc-stats{padding:4px 8px;font-size:13px}

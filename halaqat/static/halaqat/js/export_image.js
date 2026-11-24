@@ -1,51 +1,53 @@
 /*
- * تصدير جدول «الحضور — آخر 4 أسابيع» للطالب كصورة PNG.
- * رسم مباشر على Canvas (بلا مكتبات خارجية وبلا طلبات للسيرفر) من بيانات الجدول الظاهر في الصفحة.
+ * تصدير أيام الحضور (آخر 4 أسابيع) للطالب كصورة PNG.
  *
- *  • زر [data-export-image]  : يحفظ الصورة على الجهاز.
- *  • زر [data-share-image]   : يفتح قائمة المشاركة (واتساب…) ويظهر فقط على الأجهزة التي تدعم مشاركة الملفات.
- *  • يعمل في صفحة الطالب وفي نافذة الإحصائيات السريعة؛ وتُستدعى AttExport.init(root) بعد إدراج HTML جديد.
+ * يعرض **أيام الحضور الفعلية فقط** — لا شبكة أيام فارغة:
+ *   • فوق كل يوم: اسم اليوم (السبت/الأحد…) والتاريخ (12/4).
+ *   • داخل اليوم: مربّع الحالة (حاضر/تأخر/غياب/إذن) + عدد الصفحات المسمّعة + عدد الأسابير.
+ *   • بطاقة تدرّج الطالب (أصفر ← أحمر) أو شارة «جديد».
+ *
+ * رسم مباشر على Canvas (بلا مكتبات وبلا طلبات للسيرفر) من بيانات البطاقة الظاهرة.
  */
 (function () {
   'use strict';
 
-  const COLORS = {present: '#5A9367', late: '#D9A441', absent: '#B5544B', excused: '#6B8CAE', none: '#c9c2b6'};
-  const LABELS = {present: 'حاضر', late: 'تأخر', absent: 'غياب', excused: 'إذن', none: 'غير مسجّل'};
-  const ORDER = ['present', 'late', 'absent', 'excused', 'none'];
-  const MONTHS = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+  const COLORS = {present: '#5A9367', late: '#D9A441', absent: '#B5544B', excused: '#6B8CAE'};
+  const LABELS = {present: 'حاضر', late: 'تأخر', absent: 'غياب', excused: 'إذن'};
+  const ORDER = ['present', 'late', 'absent', 'excused'];
+  const GRADE_COLORS = {yellow: '#E0B33A', orange: '#E08C33', deep: '#D2603A', red: '#C0392B', new: '#7A5AA8'};
   const INK = '#4A3420', MUTED = '#7a6a55', LINE = '#E8D5B7', BG = '#FAF7F2', PRIMARY = '#B17F4A';
   const FONT = "Dubai, 'Segoe UI', Tahoma, 'Noto Naskh Arabic', Arial, sans-serif";
-  const SCALE = 2;                       // دقة مضاعفة لتبدو الصورة حادّة على الهاتف
+  const SCALE = 2;
 
   const toast = (msg, type) => { if (typeof window.showToast === 'function') window.showToast(msg, type || 'info', 3500); };
 
-  /* ── قراءة بيانات الجدول من الصفحة ── */
+  /* ── قراءة أيام الحضور من البطاقة ── */
   function readCard(card) {
-    const cells = [...card.querySelectorAll('.att-grid .dc')].map(el => {
-      const mark = el.querySelector('u');
-      let status = 'none';
-      if (mark) { const m = (mark.className.match(/s-(present|late|absent|excused)/) || [])[1]; if (m) status = m; }
-      return {
-        day: parseInt(el.textContent, 10) || 0,
-        date: el.dataset.date || '',
-        status,
-        today: el.classList.contains('today'),
-      };
-    });
-    const counts = {present: 0, late: 0, absent: 0, excused: 0, none: 0};
-    cells.forEach(c => { counts[c.status]++; });
+    const days = [...card.querySelectorAll('.att-days .att-day')].map(el => ({
+      date: el.dataset.date || '',
+      status: el.dataset.status || 'present',
+      weekday: el.dataset.weekday || '',
+      pages: parseInt(el.dataset.pages, 10) || 0,
+      sabr: parseInt(el.dataset.sabr, 10) || 0,
+    }));
+    const counts = {present: 0, late: 0, absent: 0, excused: 0};
+    days.forEach(d => { counts[d.status] = (counts[d.status] || 0) + 1; });
     return {
       student: card.dataset.student || '',
       circle: card.dataset.circle || '',
       start: card.dataset.start || '', end: card.dataset.end || '',
-      cells, counts,
+      grade: card.dataset.grade || '',
+      rate: card.dataset.rate || '',
+      gradeLabel: card.dataset.gradeLabel || '',
+      days, counts,
+      totalPages: days.reduce((s, d) => s + d.pages, 0),
+      totalSabr: days.reduce((s, d) => s + d.sabr, 0),
     };
   }
 
   function roundRect(ctx, x, y, w, h, r) {
     r = Math.min(r, w / 2, h / 2);
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
+    ctx.beginPath(); ctx.moveTo(x + r, y);
     ctx.arcTo(x + w, y, x + w, y + h, r);
     ctx.arcTo(x + w, y + h, x, y + h, r);
     ctx.arcTo(x, y + h, x, y, r);
@@ -61,16 +63,22 @@
     } catch (e) { /* نكمل بالخط البديل */ }
   }
 
+  const shortDate = iso => {
+    if (!iso || iso.length < 10) return '';
+    const [, m, d] = iso.split('-');
+    return `${parseInt(d, 10)}/${parseInt(m, 10)}`;
+  };
+
   /* ── رسم الصورة ── */
   async function draw(data) {
     await ensureFonts();
-    const W = 760, PAD = 28, GAP = 8, COLS = 7;
-    const cw = (W - PAD * 2 - GAP * (COLS - 1)) / COLS, ch = 66;
-    const rows = Math.ceil(data.cells.length / COLS);
+    const W = 760, PAD = 28, GAP = 9, COLS = 5;
+    const cw = (W - PAD * 2 - GAP * (COLS - 1)) / COLS, ch = 84;
+    const rows = Math.max(1, Math.ceil(data.days.length / COLS));
     const gridH = rows * ch + (rows - 1) * GAP;
 
-    const headerH = 138, legendH = 40, tilesH = 74, footerH = 46;
-    const H = headerH + legendH + gridH + 22 + tilesH + footerH;
+    const headerH = 140, legendH = 42, tilesH = 84, footerH = 46;
+    const H = headerH + legendH + gridH + 24 + tilesH + footerH;
 
     const cv = document.createElement('canvas');
     cv.width = W * SCALE; cv.height = H * SCALE;
@@ -94,18 +102,27 @@
     ctx.save(); roundRect(ctx, 10, 10, W - 20, 12, 6); ctx.clip();
     ctx.fillStyle = PRIMARY; ctx.fillRect(10, 10, W - 20, 12); ctx.restore();
 
-    // الترويسة: اسم الطالب والحلقة والفترة
     const R = W - PAD;
     text(data.student, R, 66, 30, INK, 700);
     if (data.circle) text(data.circle.startsWith('حلقة') ? data.circle : 'حلقة ' + data.circle, R, 96, 18, MUTED, 500);
-    text('الحضور — آخر 4 أسابيع', R, 122, 15, PRIMARY, 700);
+    text('أيام الحضور — آخر 4 أسابيع', R, 122, 15, PRIMARY, 700);
     if (data.start && data.end) text(`${data.start}  ←  ${data.end}`, PAD, 122, 14, MUTED, 400, 'left');
+
+    // بطاقة التدرّج (أعلى اليسار)
+    if (data.grade) {
+      const gc = GRADE_COLORS[data.grade] || PRIMARY;
+      const label = data.grade === 'new' ? 'جديد' : `${data.gradeLabel}${data.rate ? ' ' + data.rate + '%' : ''}`;
+      ctx.font = `700 14px ${FONT}`;
+      const tw = ctx.measureText(label).width + 30;
+      ctx.fillStyle = gc; roundRect(ctx, PAD, 40, tw, 32, 16); ctx.fill();
+      text(label, PAD + tw - 15, 61, 14, '#ffffff', 700);
+    }
 
     ctx.strokeStyle = LINE; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(PAD, headerH - 6); ctx.lineTo(W - PAD, headerH - 6); ctx.stroke();
 
-    // مفتاح الألوان (من اليمين لليسار)
-    let lx = R, ly = headerH + 22;
+    // مفتاح الألوان
+    let lx = R; const ly = headerH + 24;
     ctx.direction = 'rtl';
     ORDER.forEach(k => {
       ctx.fillStyle = COLORS[k]; roundRect(ctx, lx - 16, ly - 9, 16, 7, 3.5); ctx.fill();
@@ -115,41 +132,50 @@
       lx -= 22 + w + 18;
     });
 
-    // الشبكة: أول يوم عند أقصى اليمين (اتجاه عربي)
+    // أيام الحضور فقط — أول يوم عند أقصى اليمين
     const gy = headerH + legendH;
-    data.cells.forEach((c, i) => {
+    if (!data.days.length) {
+      text('لا توجد أيام حضور مسجَّلة في هذه الفترة', W / 2, gy + 44, 18, MUTED, 500, 'center');
+    }
+    data.days.forEach((c, i) => {
       const col = i % COLS, row = Math.floor(i / COLS);
       const x = W - PAD - (col + 1) * cw - col * GAP;
       const y = gy + row * (ch + GAP);
-      const empty = c.status === 'none';
+      const color = COLORS[c.status] || MUTED;
 
-      ctx.fillStyle = empty ? '#efede9' : BG;
-      roundRect(ctx, x, y, cw, ch, 10); ctx.fill();
-      ctx.strokeStyle = empty ? '#dedad3' : LINE; ctx.lineWidth = 1.2; ctx.stroke();
-      if (c.today) { ctx.strokeStyle = PRIMARY; ctx.lineWidth = 3; roundRect(ctx, x - 1.5, y - 1.5, cw + 3, ch + 3, 11); ctx.stroke(); }
+      ctx.fillStyle = BG; roundRect(ctx, x, y, cw, ch, 12); ctx.fill();
+      ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
 
-      // اسم الشهر عند أول خلية وعند بداية كل شهر
-      if ((i === 0 || c.day === 1) && c.date) {
-        const mi = parseInt(c.date.slice(5, 7), 10) - 1;
-        if (MONTHS[mi]) text(MONTHS[mi], x + cw / 2, y + 17, 11.5, empty ? '#9a948a' : PRIMARY, 700, 'center');
-      }
-      text(String(c.day), x + cw / 2, y + 42, 24, empty ? '#9a948a' : INK, 700, 'center');
+      // اسم اليوم + التاريخ فوق اليوم
+      text(c.weekday, x + cw / 2, y + 24, 14.5, INK, 700, 'center');
+      text(shortDate(c.date), x + cw / 2, y + 42, 13, MUTED, 400, 'center');
 
-      if (!empty) {
-        ctx.fillStyle = COLORS[c.status];
-        roundRect(ctx, x + 12, y + ch - 14, cw - 24, 6, 3); ctx.fill();
+      // الحالة
+      ctx.fillStyle = color; roundRect(ctx, x + cw / 2 - 24, y + 50, 48, 6, 3); ctx.fill();
+      text(LABELS[c.status] || '', x + cw / 2, y + 72, 12.5, color, 700, 'center');
+
+      // الصفحات والأسابير
+      if (c.pages || c.sabr) {
+        const bits = [];
+        if (c.pages) bits.push(`📖 ${c.pages}`);
+        if (c.sabr) bits.push(`📝 ${c.sabr}`);
+        text(bits.join('  '), x + cw / 2, y + ch - 4, 11, MUTED, 500, 'center');
       }
     });
 
-    // مربعات الملخص
-    const ty = gy + gridH + 22, tg = 8, tw = (W - PAD * 2 - tg * 4) / 5;
-    ORDER.forEach((k, i) => {
+    // مربعات الملخص: الحالات + الصفحات + الأسابير
+    const ty = gy + gridH + 24, tg = 8;
+    const tiles = ORDER.map(k => ({n: data.counts[k] || 0, l: LABELS[k], c: COLORS[k]}));
+    tiles.push({n: data.totalPages, l: 'صفحات', c: PRIMARY});
+    tiles.push({n: data.totalSabr, l: 'أسابير', c: '#7A5AA8'});
+    const tw = (W - PAD * 2 - tg * (tiles.length - 1)) / tiles.length;
+    tiles.forEach((t, i) => {
       const x = W - PAD - (i + 1) * tw - i * tg;
       ctx.fillStyle = BG; roundRect(ctx, x, ty, tw, tilesH - 10, 12); ctx.fill();
       ctx.strokeStyle = LINE; ctx.lineWidth = 1; ctx.stroke();
-      ctx.fillStyle = COLORS[k]; roundRect(ctx, x + tw / 2 - 14, ty + 8, 28, 5, 2.5); ctx.fill();
-      text(String(data.counts[k]), x + tw / 2, ty + 38, 24, INK, 700, 'center');
-      text(LABELS[k], x + tw / 2, ty + 56, 12.5, MUTED, 400, 'center');
+      ctx.fillStyle = t.c; roundRect(ctx, x + tw / 2 - 14, ty + 8, 28, 5, 2.5); ctx.fill();
+      text(String(t.n), x + tw / 2, ty + 40, 23, INK, 700, 'center');
+      text(t.l, x + tw / 2, ty + 58, 12.5, MUTED, 400, 'center');
     });
 
     // التذييل
@@ -189,7 +215,7 @@
         const file = new File([blob], name, {type: 'image/png'});
         if (navigator.canShare && navigator.canShare({files: [file]})) {
           try { await navigator.share({files: [file], title: `حضور ${data.student}`}); return; }
-          catch (e) { if (e && e.name === 'AbortError') return; }      // أغلق المستخدم القائمة
+          catch (e) { if (e && e.name === 'AbortError') return; }
         }
       }
       download(blob, name);
@@ -202,7 +228,6 @@
     }
   }
 
-  /* ── إظهار زر المشاركة حيث يُدعم ── */
   function canShareFiles() {
     try {
       return !!(navigator.canShare && navigator.canShare({files: [new File([''], 'a.png', {type: 'image/png'})]}));

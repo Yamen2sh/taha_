@@ -60,6 +60,11 @@ urlpatterns = [
     # ── صفحة المطور ──
     path('developer/', views.developer_page, name='developer_page'),
     path('developer/cache/refresh/', views.developer_cache_refresh, name='developer_cache_refresh'),
+    path('developer/ai/save/', views.developer_ai_save, name='developer_ai_save'),
+    path('developer/ai/test/', views.developer_ai_test, name='developer_ai_test'),
+    path('developer/sqlite/export/', views.developer_sqlite_export, name='developer_sqlite_export'),
+    path('developer/sqlite/import/', views.developer_sqlite_import, name='developer_sqlite_import'),
+    path('developer/fill-defaults/', views.developer_fill_defaults, name='developer_fill_defaults'),
 
     # ── فرز الطلاب بالسحب والإفلات (لوحة التحكم) ──
     path('admin-panel/sort-students/', views.sort_students_page, name='sort_students'),

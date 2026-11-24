@@ -54,7 +54,6 @@ class ViewerAccessMiddleware:
 # عناصر التنقّل: (اسم المسار، المفتاح active_nav، الأيقونة، النص)
 _NAV_MAIN = [
     ('home', 'home', '🏠', 'الرئيسية'),
-    ('circles_list', 'circles', '📖', 'الحلقات'),
     ('courses_list', 'courses', '🎓', 'الدورات'),
     ('absentees_list', 'absentees', '🚫', 'الغائبون'),
     ('sabr_page', 'sabr', '📝', 'السبر'),
