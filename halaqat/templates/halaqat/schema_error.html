@@ -1,0 +1,24 @@
+{% extends "halaqat/base.html" %}
+{% block title %}تحديث قاعدة البيانات مطلوب — مسجد طه{% endblock %}
+{% block content %}
+<div class="panel" style="border-right:4px solid #c0392b; max-width:720px; margin:24px auto">
+  <h2 style="margin:0 0 10px; font-size:19px; color:#a03225">⚠️ قاعدة البيانات تحتاج تحديثاً</h2>
+  <p style="font-size:13.5px; line-height:2; color:#6b5a45; margin:0 0 14px">
+    هذه الصفحة تحتاج جدولاً أو عموداً لم يُنشأ بعد، لأن <b>ترحيلات قاعدة البيانات (Migrations)</b>
+    لم تُطبَّق على هذه النسخة. لا يوجد أي خلل في بياناتك — الترحيل يُنشئ الناقص فقط ولا يحذف شيئاً.
+  </p>
+  {% if pending %}
+  <div style="background:#fdf3f2;border:1px solid #f0d2ce;border-radius:10px;padding:11px 13px;font-size:12px;color:#a03225;margin-bottom:16px">
+    الترحيلات المعلّقة: <b dir="ltr">{{ pending|join:", " }}</b>
+  </div>
+  {% endif %}
+  <a href="{% url 'developer_page' %}#schema" class="btn-primary"
+     style="display:block;text-align:center;text-decoration:none;margin-bottom:10px">
+    🗂 فتح صفحة المطور ← تطبيق الترحيلات الآن
+  </a>
+  <div style="font-size:12px;color:#9c8a71;line-height:1.9">
+    أو من الطرفية على الخادم: <code dir="ltr">python manage.py migrate</code><br>
+    (يقوم Render بذلك تلقائياً في كل بناء عبر <code dir="ltr">build.sh</code>، ويُعاد المحاولة عند إقلاع التطبيق.)
+  </div>
+</div>
+{% endblock %}

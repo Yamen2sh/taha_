@@ -150,6 +150,48 @@
   </div>
 </section>
 
+
+<section class="subpane" data-tab="schema" data-title="🗂 الترحيلات والمخطط">
+  <div class="panel" style="border-right:4px solid {% if schema.up_to_date %}#2d9e5f{% else %}#c0392b{% endif %};">
+    <div style="font-weight:700; font-size:15px; margin-bottom:6px;">🗂 ترحيلات قاعدة البيانات (Migrations)</div>
+    <div style="font-size:12px; color:#9c8a71; margin-bottom:14px; line-height:1.8;">
+      تُطبَّق الترحيلات تلقائياً عند كل بناء على Render (<code dir="ltr">build.sh</code>) وعند إقلاع التطبيق.
+      إن ظهر خطأ مثل <code dir="ltr">relation "…" does not exist</code> فمعناه أن الترحيلات لم تُطبَّق بعد —
+      اضغط الزر هنا لتطبيقها فوراً بلا إعادة نشر.
+    </div>
+
+    {% if schema.up_to_date %}
+      <div style="background:#f2faf5;border:1px solid #cfe9d9;border-radius:10px;padding:11px 13px;font-size:13px;color:#1e7a4d;font-weight:700">
+        ✅ المخطط محدَّث — لا ترحيلات معلّقة
+      </div>
+    {% else %}
+      <div style="background:#fdf3f2;border:1px solid #f0d2ce;border-radius:10px;padding:11px 13px;font-size:13px;color:#a03225;font-weight:700;line-height:1.9">
+        ⚠️ يوجد {{ schema.pending_count }} ترحيلاً غير مطبَّق — قد تتعطّل صفحات كاملة حتى يُطبَّق:
+        <div dir="ltr" style="font-size:11.5px;font-weight:400;margin-top:5px;color:#7a3a31">{{ schema.pending|join:", " }}</div>
+      </div>
+    {% endif %}
+
+    {% if schema.missing_tables %}
+      <div style="margin-top:10px;font-size:12px;color:#a03225;line-height:1.8">
+        جداول مفقودة فعلياً: <b dir="ltr">{{ schema.missing_tables|join:", " }}</b>
+      </div>
+    {% endif %}
+
+    <button id="migrate-btn" onclick="runMigrations(this)" class="btn-primary" style="width:100%;margin-top:14px"
+            {% if schema.up_to_date %}disabled{% endif %}>
+      🗂 {% if schema.up_to_date %}لا شيء معلّق{% else %}تطبيق الترحيلات الآن{% endif %}
+    </button>
+
+    <div style="margin-top:14px;font-size:11.5px;color:#8a94a2;line-height:1.9;border-top:1px solid #eee;padding-top:10px">
+      محرّك القاعدة: <b dir="ltr">{{ schema.engine }}</b> ·
+      الجداول: {% for name, ok in schema.tables.items %}{% if ok %}✅{% else %}⛔{% endif %} {{ name }}{% if not forloop.last %} · {% endif %}{% endfor %}
+    </div>
+    <div style="margin-top:8px;font-size:11px;color:#a0a8b4;line-height:1.8">
+      لتعطيل الترحيل التلقائي عند الإقلاع: متغيّر البيئة <code dir="ltr">AUTO_MIGRATE=false</code>.
+    </div>
+  </div>
+</section>
+
 <section class="subpane" data-tab="cache" data-title="⚡ الكاش">
   <div class="panel" style="border-right:4px solid #6B8CAE;">
     <div style="font-weight:700; font-size:15px; margin-bottom:6px;">⚡ كاش الذاكرة</div>
@@ -300,6 +342,27 @@ async function fillDefaults(btn) {
   } catch (e) { showToast('❌ خطأ في الاتصال', 'error'); }
   finally { setBtnLoading(btn, false); }
 }
+
+async function runMigrations(btn) {
+  if (!confirm('تطبيق ترحيلات قاعدة البيانات الآن؟\n(آمن ولا يحذف بيانات — ينشئ الجداول/الأعمدة الناقصة فقط)')) return;
+  setBtnLoading(btn, true);
+  try {
+    const res = await fetch("{% url 'developer_run_migrations' %}", {
+      method: 'POST',
+      headers: {'X-CSRFToken': getCsrf(), 'X-Requested-With': 'XMLHttpRequest'},
+    });
+    const d = await res.json();
+    if (d.ok) {
+      const n = (d.applied || []).length;
+      showToast(n ? '✅ طُبِّق ' + n + ' ترحيلاً' : '✅ لا توجد ترحيلات معلّقة', 'success', 4000);
+      setTimeout(() => location.reload(), 900);
+    } else {
+      showToast(d.error || '❌ فشل الترحيل', 'error', 7000);
+    }
+  } catch (e) { showToast('❌ خطأ في الاتصال', 'error'); }
+  finally { setBtnLoading(btn, false); }
+}
 </script>
+
 
 {% endblock %}

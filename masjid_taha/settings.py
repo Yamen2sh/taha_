@@ -153,7 +153,8 @@ MIDDLEWARE = [
     'halaqat.roles.ViewerAccessMiddleware',   # حساب «مشاهد»: الإحصائيات والسبر فقط
     'halaqat.cache_utils.WarmupMiddleware',   # احتياط للتحميل المسبق للكاش (انظر cache_utils)
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'halaqat.security.NoStoreMiddleware',     # لا تخزين لصفحات النظام في المتصفح (زر الرجوع بعد الخروج)
+    'halaqat.security.NoStoreMiddleware',            # لا تخزين لصفحات النظام في المتصفح (زر الرجوع بعد الخروج)
+    'halaqat.schema_guard.SchemaErrorMiddleware',    # شبكة أمان: «جدول مفقود» → صفحة عربية + رابط الترحيل
 ]
 
 ROOT_URLCONF = 'masjid_taha.urls'
@@ -170,6 +171,7 @@ TEMPLATES = [
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
                 'halaqat.roles.roles_context',
+                'halaqat.roles.schema_context',
             ],
         },
     },

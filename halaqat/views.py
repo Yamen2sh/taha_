@@ -21,7 +21,7 @@ from django.db import connection, transaction
 from django.db.models import Count
 from django.views.decorators.http import require_POST
 
-from . import ai_export, ai_query, cache_utils, quran
+from . import ai_export, ai_query, cache_utils, quran, schema_guard
 from .models import (
     Teacher, Circle, Student, Attendance, TeacherAttendance,
     Course, CourseAttendance, CourseTeacherAttendance, TeacherDailyAttendance, Sabr, Recitation, AssistantQuery,
@@ -1773,8 +1773,35 @@ def developer_page(request):
         'ai': ai_cfg,
         'ai_default_prompt': DEFAULT_SYSTEM_PROMPT,
         'ai_env': AISettings.env_status(),          # المفتاح/العنوان/النموذج من متغيّرات البيئة فقط
+        'schema': schema_guard.schema_status(),     # حالة الترحيلات/الجداول
         'db_engine': connection.vendor,
     })
+
+
+@login_required
+@require_POST
+def developer_run_migrations(request):
+    """
+    يطبّق الترحيلات المعلّقة الآن (بديل فوري عن الانتظار حتى النشر التالي).
+    آمن: يستخدم قفل PostgreSQL الاستشاري، ويُرجع ما طُبِّق فعلياً.
+    """
+    try:
+        applied = schema_guard.apply_migrations()
+    except Exception as exc:                       # noqa: BLE001 — نُبلّغ بدل 500
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return JsonResponse({'ok': False, 'error': f'فشل الترحيل: {exc}'}, status=400)
+        messages.error(request, f'❌ فشل تشغيل الترحيلات: {exc}')
+        return redirect(reverse('developer_page') + '#schema')
+    status = schema_guard.schema_status()
+    _log_admin_action(request, f'🗂 تشغيل الترحيلات: {", ".join(applied) or "لا شيء معلّق"}')
+    payload = {'ok': True, 'applied': applied, 'schema': status}
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return JsonResponse(payload)
+    if applied:
+        messages.success(request, f'✅ طُبِّقت الترحيلات: {", ".join(applied)}')
+    else:
+        messages.info(request, 'المخطط محدَّث بالفعل — لا ترحيلات معلّقة.')
+    return redirect(reverse('developer_page') + '#schema')
 
 
 @login_required
