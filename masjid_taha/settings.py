@@ -222,11 +222,21 @@ LOGIN_URL            = 'login'
 LOGIN_REDIRECT_URL   = 'home'
 LOGOUT_REDIRECT_URL  = 'login'
 
-# ── المساعد الإحصائي بالذكاء الاصطناعي (اختياري) ──────────────────────────
-# بدون المفتاح تعمل الصفحة بوضع «تعديل التفسير» اليدوي فقط. النموذج يستقبل السؤال وأسماء الحلقات فقط (لا بيانات طلاب).
-ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
-ANTHROPIC_MODEL = os.environ.get('ANTHROPIC_MODEL', 'claude-haiku-5-5')
-ASSISTANT_RATE_LIMIT_PER_HOUR = int(os.environ.get('ASSISTANT_RATE_LIMIT_PER_HOUR', '30'))
+# ── المساعد الإحصائي: مفتاح أي وكيل ذكاء اصطناعي (OpenAI-compatible أو Anthropic) ──
+# بدون المفتاح تعمل الصفحة بوضع «تعديل التفسير» اليدوي فقط.
+# النموذج يستقبل السؤال وأسماء الحلقات فقط (لا بيانات طلاب).
+#   AI_API_KEY   : مفتاح أي مزوّد (يُقبل أيضاً ANTHROPIC_API_KEY / OPENAI_API_KEY كأسماء بديلة)
+#   AI_BASE_URL  : عنوان الـ API، مثل https://api.openai.com/v1  أو  https://api.anthropic.com/v1
+#                  (ويعمل مع أي وكيل متوافق: OpenRouter، Groq، Together، DeepSeek، vLLM، Ollama…)
+#   AI_MODEL     : اسم النموذج لدى المزوّد (gpt-4o-mini، claude-3-5-haiku…، llama-3.1-70b…)
+# يمكن أيضاً ضبطها من «المطور ← 🤖 الذكاء الاصطناعي» (قاعدة البيانات تتقدّم على متغيّرات البيئة).
+AI_API_KEY = os.environ.get('AI_API_KEY') or os.environ.get('ANTHROPIC_API_KEY') or os.environ.get('OPENAI_API_KEY', '')
+AI_BASE_URL = os.environ.get('AI_BASE_URL', 'https://api.anthropic.com/v1')
+AI_MODEL = os.environ.get('AI_MODEL') or os.environ.get('ANTHROPIC_MODEL', 'claude-haiku-5-5')
+# للتوافق مع الكود القديم
+ANTHROPIC_API_KEY = AI_API_KEY
+ANTHROPIC_MODEL = AI_MODEL
+ASSISTANT_RATE_LIMIT_PER_HOUR = int(os.environ.get('ASSISTANT_RATE_LIMIT_HOUR', os.environ.get('ASSISTANT_RATE_LIMIT_PER_HOUR', '30')))
 
 # ── أمان الجلسة وملفات الكوكيز ────────────────────────────────────────────
 # مدة بقاء تسجيل الدخول (الافتراضي أسبوعان). قلّلها على الأجهزة المشتركة: SESSION_AGE_HOURS=12

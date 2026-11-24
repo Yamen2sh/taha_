@@ -10,6 +10,60 @@
   <div class="desc">الحضور والتسميع معاً — بجانب كل طالب مربع الحضور وزر إضافة التسميع بالصفحات.</div>
 </div>
 
+{# ───────── المحتوى المدمج من تبويب «الحلقات» (الإحصائيات + بطاقات الحلقات) ───────── #}
+<div class="stats-row">
+  <div class="stat-card"><div class="num">{{ total_circles }}</div><div class="lbl">عدد الحلقات</div></div>
+  <div class="stat-card"><div class="num">{{ total_students }}</div><div class="lbl">إجمالي الطلاب</div></div>
+  <div class="stat-card"><div class="num">{{ today|date:"d/m" }}</div><div class="lbl">تاريخ اليوم</div></div>
+</div>
+
+<div class="search-box">
+  <input type="text" id="studentSearch" data-search-url="{% url 'search_students' %}" placeholder="🔍 ابحث عن طالب بالاسم..." autocomplete="off">
+  <span class="search-icon">🔍</span>
+  <div class="search-results" id="searchResults"></div>
+</div>
+
+<div class="quick-links">
+  <a href="{% url 'absentees_list' %}" class="btn-secondary">🚫 عرض الغائبين اليوم</a>
+  <a href="{% url 'export_attendance_csv' %}?date={{ today|date:'Y-m-d' }}" class="btn-secondary">📤 تصدير حضور اليوم (CSV)</a>
+</div>
+
+{% if circle_cards %}
+<div class="circles-grid">
+  {% for card in circle_cards %}
+  <a href="?circle={{ card.circle.id }}#attendance" class="circle-card status-{{ card.card_status }}">
+    {% if card.card_status == 'complete' %}
+      <span class="card-status-dot dot-complete" title="اكتمل تسجيل الحضور اليوم"></span>
+    {% elif card.card_status == 'incomplete' %}
+      <span class="card-status-dot dot-incomplete" title="لم يكتمل تسجيل الحضور اليوم"></span>
+    {% endif %}
+    <div class="circle-icon">📖</div>
+    <h3>{{ card.circle.name }}</h3>
+    <div class="teacher">{% if card.circle.teacher %}الأستاذ <span class="student-link" role="link" onclick="event.preventDefault();event.stopPropagation();location.href='{% url 'teacher_profile' card.circle.teacher.id %}'">{{ card.circle.teacher.name }}</span>{% else %}لا يوجد أستاذ محدد{% endif %}</div>
+    <div class="row">
+      <span>{{ card.student_count }} طالب</span>
+      {% if card.today_rate is not None %}
+        <span class="badge {% if card.today_rate >= 85 %}good{% else %}mid{% endif %}">{{ card.today_rate }}% حضور</span>
+      {% else %}
+        <span class="badge none">لم يُسجَّل بعد</span>
+      {% endif %}
+    </div>
+    {% if card.card_status == 'incomplete' %}
+      <div class="progress-note incomplete">{{ card.progress_recorded }} من {{ card.progress_total }} تم تسجيلهم</div>
+    {% elif card.card_status == 'complete' %}
+      <div class="progress-note complete">اكتمل التسجيل ✓</div>
+    {% endif %}
+  </a>
+  {% endfor %}
+</div>
+{% elif not circle %}
+<div class="empty-state">
+  لا توجد حلقات بعد. يمكنك إضافة حلقة جديدة من <a href="{% url 'admin_panel' %}" style="color:var(--primary-dark); font-weight:700;">لوحة التحكم</a>.
+</div>
+{% endif %}
+
+<div id="attendance"></div>
+
 {% if circle %}
 <div class="circle-switcher">
   {% if prev_circle %}
@@ -106,7 +160,10 @@
           <label for="present_{{ r.student.id }}_{{ value }}" class="{{ value }}">{{ label }}</label>
           {% endfor %}
         </div>
-        <button type="button" class="rc-add" data-open="{{ r.student.id }}">＋ تسميع</button>
+        <div class="rc-btns">
+          <button type="button" class="rc-add" data-open="{{ r.student.id }}">＋ تسميع</button>
+          <button type="button" class="qs-btn rc-stats" onclick="openQuickStats({{ r.student.id }})" title="إحصائيات سريعة وحضور آخر 4 أسابيع">📊</button>
+        </div>
       </div>
     </div>
     {% empty %}
@@ -116,7 +173,7 @@
 </div>
 
 <p style="font-size:12px;color:#9c8a71;margin:8px 0 0">
-  «＋ تسميع» يحفظ الصفحات (أو اسم السورة في آخر جزأين: الملك ← الناس) · الحضور يُحفظ فوراً بالضغط.
+  «＋ تسميع» يحفظ الصفحات (أو اسم السورة في آخر جزأين: الملك ← الناس) · الحضور يُحفظ فوراً بالضغط · «📊» إحصائيات سريعة وأيام حضور آخر 4 أسابيع.
 </p>
 
 {% else %}
@@ -231,6 +288,7 @@ document.addEventListener('DOMContentLoaded', function () {
   } catch (e) {}
 });
 </script>
+<script src="{% static 'halaqat/js/search.js' %}?v=2"></script>
 <script src="{% static 'halaqat/js/quran_pages.js' %}?v=1"></script>
 <script src="{% static 'halaqat/js/recitation.js' %}?v=2"></script>
 <script src="{% static 'halaqat/js/attendance.js' %}?v=5"></script>

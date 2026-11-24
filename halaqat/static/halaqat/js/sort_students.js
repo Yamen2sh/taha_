@@ -347,6 +347,36 @@
     }
   });
 
+  /* ── إضافة سريعة من الحاوية الفارغة (طالب/أستاذ) بلا فتح شريط الإضافة ── */
+  document.addEventListener('click', async e => {
+    const stBtn = e.target.closest('[data-add-student-circle]');
+    if (stBtn) {
+      const circleId = stBtn.dataset.addStudentCircle;
+      const name = (prompt('اسم الطالب الجديد:') || '').trim();
+      if (!name) return;
+      stBtn.disabled = true;
+      try {
+        const data = await post(ADD_URL, {kind: 'student', name, circle_id: circleId}, {label: 'إضافة ' + name});
+        addStudentCard(data.student, circleId);
+        toast('✅ أُضيف «' + name + '»', 'success');
+      } catch (err) { toast('❌ ' + (err.message || 'تعذّرت الإضافة'), 'error'); }
+      finally { stBtn.disabled = false; }
+      return;
+    }
+    const tBtn = e.target.closest('[data-add-teacher]');
+    if (tBtn) {
+      const name = (prompt('اسم الأستاذ/الكادر الجديد:') || '').trim();
+      if (!name) return;
+      tBtn.disabled = true;
+      try {
+        const data = await post(ADD_URL, {kind: 'teacher', name}, {label: 'إضافة ' + name});
+        addTeacherCard(data.teacher);
+        toast('✅ أُضيف «' + name + '»', 'success');
+      } catch (err) { toast('❌ ' + (err.message || 'تعذّرت الإضافة'), 'error'); }
+      finally { tBtn.disabled = false; }
+    }
+  });
+
   function studentCardEl(s) {
     const el = document.createElement('div');
     el.className = 'dn-card' + (s.parked ? ' dn-card-park' : '');

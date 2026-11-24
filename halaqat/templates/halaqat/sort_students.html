@@ -69,6 +69,11 @@
       </div>
       <span class="dn-count" data-count>{{ b.students|length }}</span>
     </header>
+    {% if not b.students %}
+    <div class="dn-quickadd" data-quickadd>
+      <button type="button" class="dn-quickadd-btn" data-add-student-circle="{{ b.circle.id }}">➕ طالب</button>
+    </div>
+    {% endif %}
     {% if b.circle.teacher %}
     <div class="dn-teacher-card" data-teacher="{{ b.circle.teacher.id }}" data-name="{{ b.circle.teacher.name }}">
       <span class="dn-tgrip" aria-hidden="true">⠿</span>
@@ -80,7 +85,7 @@
       {% for s in b.students %}
       <div class="dn-card" data-student="{{ s.id }}" data-name="{{ s.name }}">
         <span class="dn-grip" aria-hidden="true">⠿</span>
-        <span class="dn-name">{{ s.name }}</span>
+        <span class="dn-name"><span class="att-dot g-{{ s.grade.grade }}" title="{{ s.grade.label }}{% if s.grade.rate is not none %} {{ s.grade.rate }}%{% endif %}"></span>{{ s.name }}{% if s.grade.grade == 'new' %}<span class="new-badge">جديد</span>{% endif %}</span>
         {% if s.last_page %}<span class="mini-tag page" title="آخر صفحة مسمّعة">ص {{ s.last_page }}</span>{% endif %}
         {% if s.birth_year %}<span class="mini-tag birth" title="سنة الميلاد">{{ s.birth_year }}</span>{% endif %}
       </div>
@@ -115,12 +120,16 @@
       {% for s in parked %}
       <div class="dn-card dn-card-park" data-student="{{ s.id }}" data-name="{{ s.name }}">
         <span class="dn-grip" aria-hidden="true">⠿</span>
-        <span class="dn-name">{{ s.name }}</span>
+        <span class="dn-name"><span class="att-dot g-{{ s.grade.grade }}" title="{{ s.grade.label }}{% if s.grade.rate is not none %} {{ s.grade.rate }}%{% endif %}"></span>{{ s.name }}{% if s.grade.grade == 'new' %}<span class="new-badge">جديد</span>{% endif %}</span>
         {% if s.last_page %}<span class="mini-tag page" title="آخر صفحة مسمّعة">ص {{ s.last_page }}</span>{% endif %}
         {% if s.birth_year %}<span class="mini-tag birth" title="سنة الميلاد">{{ s.birth_year }}</span>{% endif %}
       </div>
       {% endfor %}
       <div class="dn-empty">ضع هنا الطلاب مؤقتاً</div>
+    </div>
+    <div class="dn-quickadd" data-quickadd>
+      <button type="button" class="dn-quickadd-btn" data-add-student-circle="park">➕ طالب</button>
+      <button type="button" class="dn-quickadd-btn" data-add-teacher>➕ أستاذ</button>
     </div>
     <div class="dn-park-warn{% if not parked %} ok{% endif %}" id="dn-park-warn">
       {% if parked %}⚠️ الحاوية غير فارغة — وزّع الطلاب على الحلقات قبل مغادرة الصفحة{% else %}✅ الحاوية فارغة{% endif %}
