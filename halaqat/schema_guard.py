@@ -16,6 +16,7 @@ import logging
 import os
 import threading
 
+from django.apps import apps
 from django.db import connection
 
 logger = logging.getLogger(__name__)
@@ -41,17 +42,127 @@ def pending_migrations():
     return [f'{m.app_label}.{m.name}' for m, backwards in plan if not backwards]
 
 
+def _column_exists(table, column):
+    """هل العمود موجود في الجدول؟"""
+    try:
+        with connection.cursor() as cur:
+            if connection.vendor == 'postgresql':
+                cur.execute('SELECT to_regclass(%s) IS NOT NULL', [connection.ops.quote_name(table)])
+                if not cur.fetchone()[0]:
+                    return False
+                cur.execute("SELECT 1 FROM information_schema.columns "
+                            "WHERE table_name = %s AND column_name = %s LIMIT 1", [table, column])
+                return cur.fetchone() is not None
+            cur.execute('SELECT ' + connection.ops.quote_name(column) + ' FROM '
+                        + connection.ops.quote_name(table) + ' LIMIT 1')
+        return True
+    except Exception:                              # noqa: BLE001
+        return False
+
+
+def _op_target(op, app_label):
+    """
+    يعيد (نوع الهدف، اسم الجدول، اسم العمود|None) للعمليات التي يمكن التحقق منها،
+    أو None للعمليات التي لا يمكن الحكم عليها (تعديل/حذف/تشغيل كود).
+    """
+    from django.db.migrations import operations as ops
+
+    if isinstance(op, ops.CreateModel):
+        name = op.name
+        table = (op.options or {}).get('db_table')
+        if not table:
+            try:
+                table = apps.get_model(app_label, name)._meta.db_table
+            except LookupError:
+                table = f'{app_label}_{name.lower()}'
+        return ('table', table, None)
+
+    if isinstance(op, ops.AddField):
+        try:
+            model = apps.get_model(app_label, op.model_name)
+            table = model._meta.db_table
+        except LookupError:
+            return None
+        field = op.field
+        try:
+            field.set_attributes_from_name(op.name)
+        except Exception:                          # noqa: BLE001
+            pass
+        return ('column', table, getattr(field, 'column', None) or op.name)
+
+    return None
+
+
+def _migration_already_satisfied(migration):
+    """
+    صحيح إن كانت **كل** عمليات الترحيل إنشاءات وجميع أهدافها موجودة بالفعل
+    (أي أن الترحيل نُفِّذ فعلياً لكن لم يُسجَّل في django_migrations).
+    """
+    from django.db.migrations import operations as ops
+
+    targets = []
+    for op in migration.operations:
+        target = _op_target(op, migration.app_label)
+        if target is None:
+            if isinstance(op, (ops.AlterModelOptions, ops.AlterModelTable)):
+                continue                           # لا تُنشئ شيئاً — لا تمنع التجاوز
+            return False                           # عملية لا يمكن التحقق منها
+        targets.append(target)
+
+    if not targets:
+        return False
+    for kind, table, column in targets:
+        if kind == 'table' and not _table_exists(table):
+            return False
+        if kind == 'column' and not _column_exists(table, column):
+            return False
+    return True
+
+
+def _mark_applied(migration):
+    """يسجّل الترحيل كمطبَّق في django_migrations دون تنفيذه."""
+    from django.db.migrations.recorder import MigrationRecorder
+    recorder = MigrationRecorder(connection)
+    recorder.record_applied(migration.app_label, migration.name)
+    logger.info('تم تجاوز الترحيل %s.%s (العناصر موجودة فعلاً)', migration.app_label, migration.name)
+
+
+_DUPLICATE_HINTS = ('already exists', 'duplicate table', 'duplicate column', 'duplicate_object',
+                    'already in use')
+
+
+def record_satisfied_migrations():
+    """
+    يُسجّل — بلا تنفيذ — كل ترحيل معلّق عناصره موجودة فعلاً في القاعدة.
+    مفيد كخطوة إصلاح مستقلة عند خطأ «already exists».
+    يعيد قائمة ما سُجِّل.
+    """
+    from django.db.migrations.executor import MigrationExecutor
+    recorded = []
+    executor = MigrationExecutor(connection)
+    pending = [m for m, backwards in executor.migration_plan(executor.loader.graph.leaf_nodes())
+               if not backwards]
+    for migration in pending:
+        if _migration_already_satisfied(migration):
+            _mark_applied(migration)
+            recorded.append(f'{migration.app_label}.{migration.name}')
+    return recorded
+
+
 def apply_migrations():
     """
-    يطبّق كل الترحيلات المعلّقة ويعيد قائمة ما طُبِّق فعلياً.
+    يطبّق كل الترحيلات المعلّقة ويعيد قائمة ما طُبِّق فعلياً (أو تُجوهز عنه).
+
+    يتعامل مع الحالة الواقعية: جدول موجود في القاعدة لكن ترحيله غير مسجَّل
+    (مثل ``relation "halaqat_assistantquery" already exists``) عبر:
+      • تحقّق مسبق: إن كانت كل عمليات الترحيل إنشاءات وأهدافها موجودة → يُسجَّل كمطبَّق.
+      • وإن فشل التنفيذ بخطأ «موجود بالفعل» يُسجَّل الترحيل ويُكمَل إلى ما بعده.
     على PostgreSQL يستخدم قفلاً استشارياً لمنع تشغيل نسختين في وقت واحد.
     """
     from django.core.management import call_command
+    from django.db.migrations.executor import MigrationExecutor
 
-    applied_before = set(pending_migrations())
-    if not applied_before:
-        return []
-
+    applied, skipped = [], []
     with connection.cursor() as cur:
         locked = False
         if connection.vendor == 'postgresql':
@@ -61,16 +172,41 @@ def apply_migrations():
             if connection.vendor == 'postgresql' and not locked:
                 logger.info('ترحيل جارٍ في عملية أخرى — تخطّي الترحيل التلقائي')
                 return []
-            call_command('migrate', interactive=False, verbosity=0)
+            # حلقة: نُطبّق ترحيلاً واحداً في كل دورة حتى نتحكّم في حالة «موجود بالفعل»
+            for _ in range(200):
+                executor = MigrationExecutor(connection)
+                pending = [m for m, backwards in executor.migration_plan(executor.loader.graph.leaf_nodes())
+                           if not backwards]
+                if not pending:
+                    break
+                migration = pending[0]                     # الترحيل التالي في الترتيب
+                if _migration_already_satisfied(migration):
+                    _mark_applied(migration)
+                    skipped.append(f'{migration.app_label}.{migration.name}')
+                    continue
+                try:
+                    call_command('migrate', migration.app_label, migration.name,
+                                 interactive=False, verbosity=0)
+                    applied.append(f'{migration.app_label}.{migration.name}')
+                except Exception as exc:                   # noqa: BLE001
+                    message = str(exc).lower()
+                    if any(h in message for h in _DUPLICATE_HINTS):
+                        # العنصر موجود فعلاً — نُسجّل الترحيل ونُكمل
+                        logger.warning('تجاوز %s.%s: %s', migration.app_label, migration.name, exc)
+                        connection.rollback()
+                        _mark_applied(migration)
+                        skipped.append(f'{migration.app_label}.{migration.name}')
+                        continue
+                    raise
         finally:
             if locked:
                 cur.execute('SELECT pg_advisory_unlock(918273645)')
 
-    remaining = set(pending_migrations())
-    done = sorted(applied_before - remaining)
-    if done:
-        logger.info('طُبِّقت الترحيلات: %s', ', '.join(done))
-    return done
+    if applied:
+        logger.info('طُبِّقت الترحيلات: %s', ', '.join(applied))
+    if skipped:
+        logger.info('تُجوهز عن ترحيلات (عناصرها موجودة): %s', ', '.join(skipped))
+    return applied
 
 
 def _table_exists(table):
