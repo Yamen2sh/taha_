@@ -1881,13 +1881,19 @@ def developer_sqlite_import(request):
         with open(path, 'wb') as fh:
             for chunk in upload.chunks():
                 fh.write(chunk)
+        force = request.POST.get('force') in ('1', 'true', 'on')
         try:
-            counts = sqlite_transfer.import_from_file(path)
+            counts = sqlite_transfer.import_from_file(path, force=force)
         except ValueError as exc:
-            err = f'❌ {exc}'
+            err = str(exc)
+            needs_confirm = err.startswith('تحذير')
             if is_ajax:
-                return JsonResponse({'ok': False, 'error': err}, status=400)
-            messages.error(request, err)
+                return JsonResponse({'ok': False, 'error': err,
+                                     'needs_confirm': needs_confirm,
+                                     'collateral': sqlite_transfer.cascade_impact(
+                                         set(sqlite_transfer._file_tables(path))) if needs_confirm else {}},
+                                    status=400)
+            messages.error(request, ('⚠️ ' if needs_confirm else '❌ ') + err)
             return redirect(reverse('developer_page') + '#sqlite')
         except Exception as exc:                       # noqa: BLE001 — نُبلّغ ونتراجع تلقائياً
             err = f'❌ فشل الاستيراد — تم التراجع عن كل التغييرات: {exc}'

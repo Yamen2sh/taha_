@@ -112,9 +112,12 @@
   <div class="panel" style="border-right:4px solid #4A7B9D;">
     <div style="font-weight:700; font-size:15px; margin-bottom:6px;">🗄 تصدير / استيراد قاعدة بيانات SQLite كاملة</div>
     <div style="font-size:12px; color:#9c8a71; margin-bottom:16px; line-height:1.8;">
-      ملف واحد يحوي <b>كل البيانات</b> (الحلقات • الطلاب • الحضور • الأساتذة • الدورات • السبر • التسميع • السجلات) بمفاتيحها الأصلية.
-      يعمل من PostgreSQL إلى SQLite والعكس — بنفس معمارية المشروع.
-      <br>الاستيراد <b>يستبدل كل البيانات</b> دفعةً واحدة (ذرّياً: إما كله أو لا شيء)، ويُبقي إعدادات الذكاء الاصطناعي كما هي.
+      ملف واحد يحوي البيانات بمفاتيحها الأصلية. يعمل من PostgreSQL إلى SQLite والعكس — بنفس معمارية المشروع.
+      <br><b>لا يشترط أن يحوي الملف كل الجداول</b>: تُستبدل فقط الجداول الموجودة في ملفك،
+      و<b>الجداول غير الموجودة تُترك كما هي</b> (لا تُحذف ولا تُفرَّغ). ملف SQLite عادي بلا جدول <code dir="ltr">_meta</code> مقبول أيضاً.
+      <br>الاستيراد ذرّي (إما كله أو لا شيء) ويُبقي برومت الذكاء الاصطناعي كما هو.
+      <br><span style="color:#a03225">تنبيه:</span> إن كان ملفك يحوي جدولاً يعتمد عليه جدول آخر غير موجود فيه (مثل حلقات بلا حضور)،
+      يظهر تحذير بعدد الصفوف التي ستُحذف بالتبعية قبل التنفيذ.
     </div>
 
     <div style="display:grid;gap:14px">
@@ -319,6 +322,7 @@ async function importSqlite(btn) {
   if (!confirm('⚠️ سيتم حذف كل البيانات الحالية واستبدالها ببيانات الملف.\nهل أخذت نسخة احتياطية؟ هل أنت متأكد؟')) return;
   const fd = new FormData();
   fd.append('sqlite_file', input.files[0]);
+  if (window.__sqliteForce) fd.append('force', '1');
   setBtnLoading(btn, true);
   try {
     const res = await fetch("{% url 'developer_sqlite_import' %}", {
@@ -327,8 +331,19 @@ async function importSqlite(btn) {
       body: fd,
     });
     const d = await res.json();
-    if (d.ok) { showToast('✅ استُورد ' + d.total + ' سجلاً بنجاح', 'success', 6000); setTimeout(() => location.reload(), 1200); }
-    else showToast(d.error || '❌ فشل الاستيراد', 'error', 8000);
+    if (d.ok) {
+      window.__sqliteForce = false;
+      showToast('✅ استُورد ' + d.total + ' سجلاً بنجاح', 'success', 6000);
+      setTimeout(() => location.reload(), 1200);
+    } else if (d.needs_confirm || (d.error || '').indexOf('بالتبعية') !== -1) {
+      window.__sqliteForce = confirm('⚠️ تحذير من الحذف بالتبعية:\n\n' + d.error + '\n\nالمتابعة مع الحذف؟');
+      if (window.__sqliteForce) {
+        showToast('⏳ إعادة المحاولة مع الاستمرار…', 'info', 3000);
+        setTimeout(() => importSqlite(btn), 300);
+      }
+    } else {
+      showToast(d.error || '❌ فشل الاستيراد', 'error', 10000);
+    }
   } catch (e) { showToast('❌ خطأ في الاتصال', 'error'); }
   finally { setBtnLoading(btn, false); }
 }
