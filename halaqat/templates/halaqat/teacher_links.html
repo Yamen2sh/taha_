@@ -1,0 +1,78 @@
+{% extends "halaqat/base.html" %}
+{% load static %}
+{% block title %}ربط الأساتذة بالحلقات — مسجد طه{% endblock %}
+{% block content %}
+<style>.page-wrap{max-width:none}</style>
+
+<a href="{% url 'admin_panel' %}#links" class="back-link">→ رجوع للوحة التحكم</a>
+
+<div class="page-header dn-pageheader">
+  <h2>🔗 ربط الأساتذة بالحلقات</h2>
+  <div class="desc">واجهة أفقية مبسّطة كالفرز: لكل حلقة بطاقة — اختر أستاذها، أو اربطها بأستاذ آخر <b>ليوم واحد فقط</b>.</div>
+</div>
+
+<div class="tl-bar">
+  <input type="search" id="tl-find" placeholder="🔍 ابحث عن حلقة أو أستاذ…" autocomplete="off">
+  <span class="tl-chip">الحلقات: {{ rows|length }}</span>
+  <span class="tl-chip ok">روابط مؤقتة اليوم: {{ active_subs }}</span>
+  <span class="tl-chip">الأستاذ المؤقت يرجع تلقائياً في اليوم التالي</span>
+</div>
+
+<div class="tl-board" id="tl-board" data-link-url="{% url 'teacher_link_set' %}" data-today="{{ today|date:'Y-m-d' }}">
+  {% for r in rows %}
+  <section class="tl-card{% if r.substitute_date == today %} is-temp{% endif %}" data-circle="{{ r.circle.id }}"
+           data-name="{{ r.circle.name }}" data-sub="{{ r.substitute.id|default:'' }}"
+           data-sub-date="{{ r.substitute_date|date:'Y-m-d'|default:'' }}">
+    <header class="tl-head">
+      <div class="tl-title">{{ r.circle.name }}</div>
+      <span class="tl-students">{{ r.students }} طالب</span>
+    </header>
+
+    <div class="tl-current">
+      <span class="tl-lbl">الأستاذ الأساسي</span>
+      <div class="tl-name" data-main>
+        {% if r.teacher %}<a href="{% url 'teacher_profile' r.teacher.id %}" class="student-link">{{ r.teacher.name }}</a>
+        {% else %}<span class="tl-none">بلا أستاذ</span>{% endif %}
+      </div>
+    </div>
+
+    <div class="tl-row">
+      <select class="tl-select" data-role="teacher">
+        <option value="">— بلا أستاذ —</option>
+        {% for t in teachers %}
+        <option value="{{ t.id }}" {% if r.teacher and t.id == r.teacher.id %}selected{% endif %}>{{ t.name }}</option>
+        {% endfor %}
+      </select>
+      <button type="button" class="tl-btn" data-act="permanent">ربط دائم</button>
+      <button type="button" class="tl-btn ghost" data-act="clear" title="إزالة الأستاذ">✕</button>
+    </div>
+
+    <div class="tl-temp">
+      <span class="tl-lbl">بديل ليوم واحد</span>
+      <div class="tl-row">
+        <select class="tl-select" data-role="sub">
+          <option value="">— بلا بديل —</option>
+          {% for t in teachers %}
+          <option value="{{ t.id }}" {% if r.substitute and t.id == r.substitute.id %}selected{% endif %}>{{ t.name }}</option>
+          {% endfor %}
+        </select>
+        <input type="date" class="tl-date" data-role="date" value="{{ r.substitute_date|date:'Y-m-d'|default:today|date:'Y-m-d' }}">
+        <button type="button" class="tl-btn warn" data-act="temporary">ربط مؤقت</button>
+      </div>
+      <div class="tl-badge" data-badge {% if r.substitute_date != today %}hidden{% endif %}>
+        {% if r.substitute %}⏱ بديل اليوم: {{ r.substitute.name }}{% endif %}
+      </div>
+    </div>
+
+    <div class="tl-new">
+      <input type="text" class="tl-input" data-role="new-teacher" placeholder="أو أضف أستاذاً جديداً…">
+      <button type="button" class="tl-btn ghost" data-act="new">＋</button>
+    </div>
+  </section>
+  {% empty %}
+  <div class="empty-state">لا توجد حلقات بعد. أضف حلقة من <a href="{% url 'admin_panel' %}">لوحة التحكم</a>.</div>
+  {% endfor %}
+</div>
+
+<script src="{% static 'halaqat/js/teacher_links.js' %}?v=1"></script>
+{% endblock %}

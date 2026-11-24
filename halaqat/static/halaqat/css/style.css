@@ -891,3 +891,141 @@ body.dn-dragging{cursor:grabbing;user-select:none;-webkit-user-select:none}
 .st-mt tfoot td{font-weight:800;background:var(--bg-alt);border-top:2px solid var(--accent-light)}
 .st-mt tfoot td:first-child{background:var(--bg-alt)}
 .st-mt thead th a{display:inline-block}
+
+/* ======================================================
+   وسوم صغيرة (tag) جانب اسم الطالب: آخر صفحة مسمّعة + سنة الميلاد
+   ====================================================== */
+.mini-tag{display:inline-flex;align-items:center;gap:2px;border-radius:999px;padding:1px 7px;
+  font-size:10.5px;font-weight:700;line-height:1.7;vertical-align:middle;margin-inline-start:5px;
+  border:1px solid transparent;white-space:nowrap}
+.mini-tag.page{background:#eaf1f7;color:#2f6187;border-color:#c9dcec}
+.mini-tag.birth{background:#f4f0e6;color:#8a6b3f;border-color:#e4d8bf}
+.mini-tag.temp{background:var(--warning-bg);color:#8a6410;border-color:#ecd49b}
+
+/* ======================================================
+   «الدورات القرآنية»: صف الطالب مع مربع الحضور وزر التسميع
+   ====================================================== */
+.rc-nameline{display:flex;align-items:center;flex-wrap:wrap;gap:2px}
+.rc-row{align-items:flex-start;flex-wrap:wrap}
+.rc-side{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0}
+.tristate.compact{gap:3px}
+.tristate.compact label{padding:4px 8px;font-size:11.5px;border-radius:7px}
+.rc-add{border:none;border-radius:10px;padding:7px 12px;background:linear-gradient(135deg,var(--primary),var(--primary-dark));
+  color:#fff;font:inherit;font-weight:700;font-size:12.5px;cursor:pointer;white-space:nowrap}
+.rc-add:hover{filter:brightness(1.06)}
+@media (max-width:520px){
+  .rc-side{flex-direction:row;align-items:center;width:100%;justify-content:space-between;margin-top:6px}
+  .rc-main{width:100%}
+}
+/* أزرار −/+ للصفحة */
+.rc-step{width:36px;height:38px;border:1px solid var(--accent-light);background:var(--bg-alt);
+  border-radius:9px;font:inherit;font-size:16px;font-weight:800;color:var(--primary-dark);cursor:pointer;flex-shrink:0}
+.rc-step:active{background:var(--accent-light)}
+/* صفحة واحدة / أسماء السور */
+.rc-pags{font-size:11.5px;color:#9c8a71;margin:2px 0 0 34px}
+#rc-s-p1,#rc-s-p2{flex:1 1 110px;min-width:0;padding:9px;border:1px solid var(--accent-light);
+  border-radius:10px;background:#fff;font:inherit;font-size:13px;color:var(--ink)}
+#rc-surah{padding:10px;border:1px solid var(--accent-light);border-radius:10px;background:#fff;
+  font:inherit;font-size:14px;flex:1;color:var(--ink)}
+
+/* ======================================================
+   لوحة الفرز: الحاوية الفارغة + بطاقات الأساتذة + الإضافة السريعة
+   ====================================================== */
+.dn-addbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px;margin-bottom:10px}
+.dn-addbar[hidden]{display:none}
+.dn-addform{display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:#fff;border:1px solid var(--accent-light);
+  border-radius:12px;padding:8px 10px}
+.dn-addform b{font-size:12px;color:var(--primary-deep);width:100%}
+.dn-addform input,.dn-addform select{flex:1 1 110px;min-width:0;padding:7px 9px;border:1px solid var(--accent-light);
+  border-radius:9px;font:inherit;font-size:12.5px;background:var(--bg);color:var(--ink)}
+.dn-addbtn{border:none;border-radius:9px;padding:8px 12px;background:var(--primary);color:#fff;font:inherit;
+  font-size:12.5px;font-weight:700;cursor:pointer}
+.dn-addbtn:disabled{opacity:.5}
+/* بطاقة الأستاذ (لون مغاير للطلاب) */
+.dn-teacher-card{display:flex;align-items:center;gap:6px;margin:6px 8px 0;padding-inline:2px 8px;min-height:34px;
+  border-radius:9px;background:linear-gradient(135deg,#eef3fa,#e2ebf6);border:1px solid #bcd0e6;
+  color:#28506f;font-size:12.5px;font-weight:700;cursor:grab;touch-action:none}
+.dn-teacher-card.free{background:linear-gradient(135deg,#f6f0e4,#efe4d2);border-color:#dcc9a6;color:#7a5a2c}
+.dn-teacher-card.temp{background:linear-gradient(135deg,#fdf3dc,#f8e6bd);border-color:var(--warning);color:#8a6410}
+.dn-tgrip{width:26px;align-self:stretch;display:flex;align-items:center;justify-content:center;color:#9db3c9;
+  font-size:14px;cursor:grab;flex-shrink:0}
+.dn-tname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dn-trole{font-size:10px;font-weight:600;opacity:.75}
+/* الحاوية الفارغة الكبيرة */
+.dn-park{grid-column:1/-1;min-height:170px;border:2px dashed #c8b48e;background:#fdfaf4}
+.dn-park.is-over{border-color:var(--primary);background:#fff8ee}
+.dn-park .dn-head{background:linear-gradient(180deg,#f7efdf,#fff);border-radius:14px 14px 0 0}
+.dn-park-teachers{display:flex;flex-wrap:wrap;gap:6px;padding:6px 8px 0}
+.dn-park-teachers .dn-teacher-card{margin:0}
+.dn-tempty{font-size:11.5px;color:#b9a68c;padding:4px 2px}
+.dn-park-list{flex-wrap:wrap;flex-direction:row;align-content:flex-start;gap:6px}
+.dn-park-list .dn-card{flex:0 1 220px}
+.dn-card-park{background:#fff6e6;border-color:#e5cfa6}
+.dn-park-warn{margin:6px 8px 8px;border-radius:9px;padding:6px 10px;font-size:11.5px;font-weight:700;
+  background:var(--error-bg);color:#8d3b33;border:1px solid #e6c4c0;text-align:center}
+.dn-park-warn.ok{background:var(--success-bg);color:#2f6b3f;border-color:#bcd9c3}
+@media (max-width:719px) and (orientation:portrait){
+  .dn-park{display:none}
+}
+
+/* ======================================================
+   واجهة ربط الأساتذة بالحلقات (أفقية كالفرز)
+   ====================================================== */
+.tl-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:10px}
+.tl-bar input[type=search]{flex:1;min-width:200px;max-width:320px;padding:9px 12px;border:1px solid var(--accent-light);
+  border-radius:10px;font:inherit;font-size:14px;background:#fff;color:var(--ink)}
+.tl-chip{font-size:11.5px;background:var(--bg-alt);border-radius:999px;padding:5px 12px;color:#7a6a55;font-weight:600}
+.tl-chip.ok{background:var(--success-bg);color:#2f6b3f}
+.tl-board{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:10px}
+.tl-card{background:var(--white);border:1.5px solid var(--accent-light);border-radius:14px;box-shadow:var(--shadow);
+  padding:10px 11px;display:flex;flex-direction:column;gap:8px}
+.tl-card.is-temp{border-color:var(--warning);background:#fffdf7}
+.tl-head{display:flex;align-items:center;justify-content:space-between;gap:6px}
+.tl-title{font-weight:700;font-size:14px;color:var(--primary-deep)}
+.tl-students{font-size:11px;background:var(--bg-alt);border-radius:999px;padding:2px 9px;color:#7a6a55}
+.tl-lbl{font-size:11px;color:#9c8a71;font-weight:600}
+.tl-current{display:flex;flex-direction:column;gap:1px}
+.tl-name{font-size:13.5px;font-weight:700}
+.tl-none{color:#b9a68c;font-weight:400;font-size:12.5px}
+.tl-row{display:flex;gap:5px;align-items:center}
+.tl-select{flex:1;min-width:0;padding:7px 8px;border:1px solid var(--accent-light);border-radius:9px;
+  font:inherit;font-size:12.5px;background:#fff;color:var(--ink)}
+.tl-date{width:120px;padding:6px 7px;border:1px solid var(--accent-light);border-radius:9px;font:inherit;font-size:12px}
+.tl-btn{border:none;border-radius:9px;padding:7px 10px;background:var(--primary);color:#fff;font:inherit;
+  font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
+.tl-btn.ghost{background:var(--bg-alt);color:var(--primary-dark)}
+.tl-btn.warn{background:var(--warning);color:#4a3420}
+.tl-btn:disabled{opacity:.5}
+.tl-temp{display:flex;flex-direction:column;gap:5px;border-top:1px dashed var(--accent-light);padding-top:7px}
+.tl-badge{font-size:11px;font-weight:700;color:#8a6410;background:var(--warning-bg);border-radius:8px;padding:4px 8px}
+.tl-badge[hidden]{display:none}
+.tl-new{display:flex;gap:5px;border-top:1px dashed var(--accent-light);padding-top:7px}
+.tl-input{flex:1;min-width:0;padding:6px 8px;border:1px solid var(--accent-light);border-radius:9px;font:inherit;font-size:12px}
+@media (max-width:719px) and (orientation:portrait){
+  .tl-board{grid-template-columns:1fr}
+}
+
+/* ======================================================
+   إحصائيات المحفوظات في الصفحة الرئيسية
+   ====================================================== */
+.rec-stat-panel{margin-bottom:12px}
+.rec-stat-panel h3 small{font-size:11.5px;color:#9c8a71;font-weight:400}
+.rec-stat-circles{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.rec-circle-chip{font-size:11.5px;text-decoration:none;background:var(--bg-alt);color:#7a6a55;
+  border-radius:999px;padding:4px 10px;font-weight:600;border:1px solid transparent}
+.rec-circle-chip.on{background:var(--success-bg);color:#2f6b3f;border-color:#bcd9c3}
+.rec-circle-chip b{font-size:11px;opacity:.85}
+
+/* ======================================================
+   مؤشر حالة الاتصال / العمليات المعلّقة
+   ====================================================== */
+.sync-badge{position:fixed;bottom:calc(var(--nav-h) + 10px);left:10px;z-index:8500;
+  background:#8a6410;color:#fff;border-radius:999px;padding:7px 14px;font-size:12px;font-weight:700;
+  box-shadow:0 6px 20px -8px rgba(0,0,0,.5);display:flex;align-items:center;gap:8px}
+.sync-badge[hidden]{display:none}
+.sync-badge.offline{background:#8d3b33}
+.sync-badge button{border:none;border-radius:999px;padding:3px 9px;font:inherit;font-size:11px;
+  font-weight:700;background:#fff;color:#8a6410;cursor:pointer}
+@keyframes shakeX{0%,100%{transform:translateX(0)}25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
+label.shake{animation:shakeX .3s 2}
+.saving{opacity:.7}

@@ -1,11 +1,13 @@
 {% extends "halaqat/base.html" %}
 {% load static %}
-{% block title %}التسميع — مسجد طه{% endblock %}
+{% block title %}الدورات القرآنية — مسجد طه{% endblock %}
 {% block content %}
 
+<div id="save-toast" class="save-toast">تم الحفظ ✓</div>
+
 <div class="page-header">
-  <h2>🎙 التسميع</h2>
-  <div class="desc">سجّل ما سمّعه كل طالب من القرآن الكريم — حلقةً حلقة.</div>
+  <h2>🎙 الدورات القرآنية</h2>
+  <div class="desc">الحضور والتسميع معاً — بجانب كل طالب مربع الحضور وزر إضافة التسميع بالصفحات.</div>
 </div>
 
 {% if circle %}
@@ -32,43 +34,90 @@
 <div class="rc-bar">
   <form method="get" class="date-form" style="margin-top:0">
     <input type="hidden" name="circle" value="{{ circle.id }}">
-    <label class="rc-datelbl">تاريخ التسميع</label>
+    <label class="rc-datelbl">تاريخ الجلسة</label>
     <input type="date" name="date" value="{{ selected_date|date:'Y-m-d' }}" max="{{ today|date:'Y-m-d' }}">
     <button type="submit">عرض</button>
     {% if selected_date != today %}<a href="?circle={{ circle.id }}" class="rc-today">اليوم</a>{% endif %}
   </form>
-  <a href="{% url 'circle_detail' circle.id %}" class="rc-link">📋 حضور الحلقة</a>
+  <a href="{% url 'circle_detail' circle.id %}?date={{ selected_date|date:'Y-m-d' }}" class="rc-link">📋 صفحة الحلقة</a>
 </div>
 
 <div class="summary-bar" style="margin-top:14px">
-  <div class="summary-chip present"><div class="n" id="rc-heard">{{ heard }}</div><div class="l">سُمِّع</div></div>
-  <div class="summary-chip"><div class="n" id="rc-remaining">{{ remaining }}</div><div class="l">لم يُسمَّع</div></div>
-  <div class="summary-chip"><div class="n">{{ rows|length }}</div><div class="l">الطلاب</div></div>
+  <div class="summary-chip present"><div class="n" id="cnt-present">{{ counts.present }}</div><div class="l">حاضر</div></div>
+  <div class="summary-chip late"><div class="n" id="cnt-late">{{ counts.late }}</div><div class="l">تأخر</div></div>
+  <div class="summary-chip excused"><div class="n" id="cnt-excused">{{ counts.excused }}</div><div class="l">إذن</div></div>
+  <div class="summary-chip absent"><div class="n" id="cnt-absent">{{ counts.absent }}</div><div class="l">غائب</div></div>
+  <div class="summary-chip"><div class="n" id="rc-heard">{{ heard }}</div><div class="l">سُمِّع</div></div>
 </div>
 
+{% csrf_token %}
+
+{% if teacher %}
+<div class="teacher-attendance-box">
+  <div class="student-row teacher-row" data-kind="teacher" data-entity-id="{{ teacher.id }}"
+       data-save-url="{% url 'save_attendance' circle.id %}" data-date="{{ selected_date|date:'Y-m-d' }}">
+    <div class="student-name">
+      <div class="avatar teacher-avatar">👨‍🏫</div>
+      <div>
+        <a href="{% url 'teacher_profile' teacher.id %}" class="student-link">{{ teacher.name }}</a>
+        <span class="role-tag">{% if teacher_is_substitute %}أستاذ بديل (يوم الربط){% else %}الأستاذ المسؤول{% endif %}</span>
+      </div>
+    </div>
+    <div class="tristate">
+      {% for value, label in status_choices %}
+      <input type="radio" name="status_teacher_{{ teacher.id }}" id="present_teacher_{{ teacher.id }}_{{ value }}"
+             value="{{ value }}" {% if teacher_status == value %}checked{% endif %}>
+      <label for="present_teacher_{{ teacher.id }}_{{ value }}" class="{{ value }}">{{ label }}</label>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <div class="panel" style="padding:6px 0">
-  <div id="rc-list">
+  <div id="rc-list" class="student-table" data-circle-id="{{ circle.id }}" data-date="{{ selected_date|date:'Y-m-d' }}"
+       data-save-url="{% url 'save_attendance' circle.id %}">
     {% for r in rows %}
-    <div class="rc-row" id="rc-row-{{ r.student.id }}" data-id="{{ r.student.id }}">
+    <div class="rc-row" id="rc-row-{{ r.student.id }}" data-id="{{ r.student.id }}"
+         data-kind="student" data-entity-id="{{ r.student.id }}"
+         data-save-url="{% url 'save_attendance' circle.id %}" data-date="{{ selected_date|date:'Y-m-d' }}">
       <div class="rc-main">
         <div class="avatar">{{ r.student.name|first }}</div>
         <div class="rc-info">
-          <a class="student-link rc-name" href="{% url 'student_profile' r.student.id %}">{{ r.student.name }}</a>
+          <div class="rc-nameline">
+            <a class="student-link rc-name" href="{% url 'student_profile' r.student.id %}">{{ r.student.name }}</a>
+            {% if r.last_page %}<span class="mini-tag page" title="آخر صفحة مسمّعة">📖 ص {{ r.last_page }}</span>{% endif %}
+            {% if r.birth_date %}<span class="mini-tag birth" title="تاريخ الميلاد">{{ r.birth_date|date:"Y" }}</span>{% endif %}
+          </div>
           <div class="rc-last" data-last>
-            {% if r.last %}آخر تسميع: <b>{{ r.last.range_display }}</b> · {{ r.last.date|date:"Y-m-d" }}
+            {% if r.last %}{{ r.last.range_display }} · {{ r.last.date|date:"Y-m-d" }}
               <span class="rc-ago">{% if r.last_days_ago == 0 %}اليوم{% elif r.last_days_ago == 1 %}أمس{% else %}قبل {{ r.last_days_ago }} يوماً{% endif %}</span>
             {% else %}<span class="rc-none">لم يُسمَّع بعد</span>{% endif %}
           </div>
-          <div class="rc-day" data-day>{% for it in r.items %}<span class="rc-chip{% if it.kind == 'review' %} review{% endif %}">{{ it.range_display }}{% if it.kind == 'review' %} · مراجعة{% endif %}{% if it.grade %} · {{ it.get_grade_display }}{% endif %}</span>{% endfor %}</div>
+          <div class="rc-day" data-day>{% for it in r.items %}<span class="rc-chip{% if it.kind == 'review' %} review{% endif %}">{{ it.range_display }}{% if it.grade %} · {{ it.get_grade_display }}{% endif %}</span>{% endfor %}</div>
         </div>
       </div>
-      <button type="button" class="rc-add" data-open="{{ r.student.id }}">＋ تسميع</button>
+
+      <div class="rc-side">
+        <div class="tristate compact">
+          {% for value, label in status_choices %}
+          <input type="radio" name="status_{{ r.student.id }}" id="present_{{ r.student.id }}_{{ value }}"
+                 value="{{ value }}" {% if r.status == value %}checked{% endif %}>
+          <label for="present_{{ r.student.id }}_{{ value }}" class="{{ value }}">{{ label }}</label>
+          {% endfor %}
+        </div>
+        <button type="button" class="rc-add" data-open="{{ r.student.id }}">＋ تسميع</button>
+      </div>
     </div>
     {% empty %}
-    <div class="empty-state">لا يوجد طلاب في هذه الحلقة بعد.</div>
+    <div class="empty-state">لا يوجد طلاب في هذه الحلقة بعد. أضِف طلاباً من <a href="{% url 'admin_panel' %}" style="color:var(--primary-dark);font-weight:700">لوحة التحكم</a> أو من لوحة الفرز.</div>
     {% endfor %}
   </div>
 </div>
+
+<p style="font-size:12px;color:#9c8a71;margin:8px 0 0">
+  «＋ تسميع» يحفظ الصفحات (أو اسم السورة في آخر جزأين: الملك ← الناس) · الحضور يُحفظ فوراً بالضغط.
+</p>
 
 {% else %}
 <div class="empty-state">لا توجد حلقات بعد. أضف حلقة من لوحة التحكم أولاً.</div>
@@ -78,9 +127,9 @@
 
 {% block overlays %}
 {% if circle %}
-{# ───────── نافذة تسجيل التسميع ───────── #}
+{# ───────── نافذة تسجيل التسميع (بالصفحات / بأسماء السور) ───────── #}
 <div class="rc-overlay" id="rc-overlay" hidden>
-  <div class="rc-sheet" role="dialog" aria-modal="true" aria-labelledby="rc-title">
+  <div class="rc-sheet" id="rc-sheet" role="dialog" aria-modal="true" aria-labelledby="rc-title">
     <div class="rc-sheet-head">
       <div>
         <div class="rc-title" id="rc-title"></div>
@@ -95,26 +144,51 @@
         <button type="button" class="qs-btn" id="rc-cancel-edit">إلغاء التعديل</button>
       </div>
 
+      <div class="rc-seg" id="rc-mode" role="radiogroup" aria-label="طريقة التسميع">
+        <button type="button" role="radio" data-v="pages" class="on" aria-checked="true">📄 بالصفحات</button>
+        <button type="button" role="radio" data-v="surah" aria-checked="false">📚 بأسماء السور</button>
+      </div>
+
       <div class="rc-seg" id="rc-kind" role="radiogroup" aria-label="نوع التسميع">
         {% for value, label in kinds %}<button type="button" role="radio" data-v="{{ value }}"{% if forloop.first %} class="on" aria-checked="true"{% else %} aria-checked="false"{% endif %}>{{ label }}</button>{% endfor %}
       </div>
 
-      <div class="rc-point">
-        <span class="rc-lbl">من</span>
-        <select id="rc-from-surah" aria-label="سورة البداية"></select>
-        <input type="number" id="rc-from-ayah" min="1" inputmode="numeric" placeholder="الآية" aria-label="آية البداية">
-        <span class="rc-max" id="rc-from-max"></span>
+      {# وضع الصفحات #}
+      <div id="rc-pages-mode">
+        <div class="rc-point">
+          <span class="rc-lbl">من</span>
+          <button type="button" class="rc-step" data-step="-1" data-for="rc-from-page" aria-label="صفحة أقل">−</button>
+          <input type="number" id="rc-from-page" min="1" max="{{ last_page }}" inputmode="numeric" placeholder="الصفحة" aria-label="من صفحة">
+          <button type="button" class="rc-step" data-step="1" data-for="rc-from-page" aria-label="صفحة أكثر">+</button>
+          <span class="rc-max" id="rc-from-info"></span>
+        </div>
+        <div class="rc-point">
+          <span class="rc-lbl">إلى</span>
+          <button type="button" class="rc-step" data-step="-1" data-for="rc-to-page" aria-label="صفحة أقل">−</button>
+          <input type="number" id="rc-to-page" min="1" max="{{ last_page }}" inputmode="numeric" placeholder="اختياري" aria-label="إلى صفحة">
+          <button type="button" class="rc-step" data-step="1" data-for="rc-to-page" aria-label="صفحة أكثر">+</button>
+          <span class="rc-max" id="rc-to-info"></span>
+        </div>
       </div>
-      <div class="rc-point">
-        <span class="rc-lbl">إلى</span>
-        <select id="rc-to-surah" aria-label="سورة النهاية"></select>
-        <input type="number" id="rc-to-ayah" min="1" inputmode="numeric" placeholder="الآية" aria-label="آية النهاية">
-        <span class="rc-max" id="rc-to-max"></span>
+
+      {# وضع أسماء السور (آخر جزأين) #}
+      <div id="rc-surah-mode" hidden>
+        <div class="rc-point">
+          <span class="rc-lbl">السورة</span>
+          <select id="rc-surah" aria-label="السورة"></select>
+        </div>
+        <div class="rc-pags" id="rc-surah-pages"></div>
+        <div class="rc-point">
+          <span class="rc-lbl">من</span>
+          <select id="rc-s-p1" aria-label="من صفحة (داخل السورة)"></select>
+          <span class="rc-lbl">إلى</span>
+          <select id="rc-s-p2" aria-label="إلى صفحة (داخل السورة)"></select>
+        </div>
       </div>
 
       <div class="rc-quick">
-        <button type="button" class="qs-btn" id="rc-continue" hidden>▶ تكملة من آخر مقطع</button>
-        <button type="button" class="qs-btn" id="rc-whole">السورة كاملة</button>
+        <button type="button" class="qs-btn" id="rc-continue" hidden>▶ تكملة من آخر صفحة</button>
+        <button type="button" class="qs-btn" id="rc-page-only">صفحة واحدة فقط</button>
       </div>
       <div class="rc-preview" id="rc-preview"></div>
 
@@ -139,10 +213,26 @@
 </div>
 
 {{ surahs|json_script:"surahs-data" }}
+{{ surah_choices|json_script:"surah-choices-data" }}
 <div id="rc-root" hidden
      data-date="{{ selected_date|date:'Y-m-d' }}" data-today="{{ today|date:'Y-m-d' }}"
+     data-last-page="{{ last_page }}" data-surah-mode-first="{{ surah_mode_first }}"
      data-info-url="{% url 'recitation_student_info' 0 %}" data-add-url="{% url 'recitation_add' 0 %}"
      data-update-url="{% url 'recitation_update' 0 %}" data-delete-url="{% url 'recitation_delete' 0 %}"></div>
-<script src="{% static 'halaqat/js/recitation.js' %}?v=1"></script>
+{{ circle_rows_json|json_script:"circle-rows-data" }}
+<script>
+/* حفظ قائمة طلاب الحلقة محلياً: تُعرض الأسماء والوسوم فوراً ولو انقطع الاتصال */
+document.addEventListener('DOMContentLoaded', function () {
+  try {
+    if (!window.StudentIndex) return;
+    var cid = {{ circle.id|default:"0" }};
+    var rows = JSON.parse(document.getElementById('circle-rows-data').textContent || '[]');
+    if (cid) window.StudentIndex.saveList(cid, rows);
+  } catch (e) {}
+});
+</script>
+<script src="{% static 'halaqat/js/quran_pages.js' %}?v=1"></script>
+<script src="{% static 'halaqat/js/recitation.js' %}?v=2"></script>
+<script src="{% static 'halaqat/js/attendance.js' %}?v=5"></script>
 {% endif %}
 {% endblock %}

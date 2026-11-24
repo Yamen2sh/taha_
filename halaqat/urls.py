@@ -7,6 +7,7 @@ urlpatterns = [
     path('logout/', auth_views.LogoutView.as_view(), name='logout'),
 
     path('home/', views.home, name='home'),
+    path('sw.js', views.service_worker, name='service_worker'),
     path('help/', views.help_page, name='help_page'),
     path('circles/', views.circles_list, name='circles_list'),
     path('circles/<int:circle_id>/', views.circle_detail, name='circle_detail'),
@@ -63,6 +64,11 @@ urlpatterns = [
     # ── فرز الطلاب بالسحب والإفلات (لوحة التحكم) ──
     path('admin-panel/sort-students/', views.sort_students_page, name='sort_students'),
     path('admin-panel/sort-students/move/', views.sort_students_move, name='sort_students_move'),
+    path('admin-panel/sort-students/add/', views.sort_students_add, name='sort_students_add'),
+
+    # ── ربط كل أستاذ بحلقته (ويسمح بربط مؤقت ليوم واحد) ──
+    path('admin-panel/teacher-links/', views.teacher_links_page, name='teacher_links'),
+    path('admin-panel/teacher-links/set/', views.teacher_link_set, name='teacher_link_set'),
 
     # ── التسميع (القرآن الكريم) حلقةً حلقة ──
     path('recitation/', views.recitation_page, name='recitation_page'),

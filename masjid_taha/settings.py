@@ -199,6 +199,24 @@ STORAGES = {
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# ══════════════════════════════════════════════════════════════
+#  إعدادات الوكيل (Render / معاينة التطوير)
+# ══════════════════════════════════════════════════════════════
+# يخبر Django أن الطلب وصل عبر HTTPS (وكيل) حتى تُبنى الروابط والكوكيز صحيحة
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# عرض الصفحات داخل إطار (iframe): مطلوب لمعاينة التطوير فقط.
+# في الإنتاج (DEBUG=False) يبقى DENY ما لم يُفعّل DJANGO_ALLOW_FRAME صراحةً.
+_ALLOW_FRAME = os.environ.get('DJANGO_ALLOW_FRAME', '').lower() in ('1', 'true', 'yes') or DEBUG
+X_FRAME_OPTIONS = 'SAMEORIGIN' if _ALLOW_FRAME else 'DENY'
+
+# كوكيز تعمل داخل إطار المعاينة عبر نطاق مختلف (معاينة فقط: PREVIEW_MODE=1)
+if os.environ.get('PREVIEW_MODE', '').lower() in ('1', 'true', 'yes'):
+    SESSION_COOKIE_SAMESITE = 'None'
+    CSRF_COOKIE_SAMESITE = 'None'
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+
 LOGIN_URL            = 'login'
 LOGIN_REDIRECT_URL   = 'home'
 LOGOUT_REDIRECT_URL  = 'login'

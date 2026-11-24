@@ -79,7 +79,7 @@ class SabrAdmin(admin.ModelAdmin):
 
 @admin.register(Recitation)
 class RecitationAdmin(admin.ModelAdmin):
-    list_display = ('student', 'circle', 'date', 'kind', 'grade')
-    list_filter = ('circle', 'kind', 'grade', 'date')
+    list_display = ('student', 'circle', 'date', 'kind', 'mode', 'from_page', 'to_page', 'grade')
+    list_filter = ('circle', 'kind', 'mode', 'grade', 'date')
     search_fields = ('student__name',)
     date_hierarchy = 'date'

@@ -31,6 +31,13 @@ class Circle(models.Model):
     )
     description = models.CharField('وصف مختصر', max_length=255, blank=True)
     display_order = models.PositiveIntegerField('ترتيب العرض', default=0, help_text='كلما كان الرقم أصغر ظهرت الحلقة أولاً في قائمة الحلقات.')
+    # ربط مؤقت: أستاذ آخر يتولى الحلقة في يوم محدد فقط، ثم ترجع الحلقة لأستاذها الأساسي تلقائياً.
+    substitute_teacher = models.ForeignKey(
+        Teacher, verbose_name='أستاذ بديل (يوم الربط فقط)',
+        on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='substitute_circles',
+    )
+    substitute_date = models.DateField('يوم الربط المؤقت', null=True, blank=True)
     created_at = models.DateTimeField('تاريخ الإنشاء', auto_now_add=True)
 
     class Meta:
@@ -43,7 +50,19 @@ class Circle(models.Model):
 
     @property
     def student_count(self):
-        return self.students.count()
+        return self.students.filter(parked_at__isnull=True).count()
+
+    def teacher_on(self, date):
+        """
+        الأستاذ المسؤول في يوم محدد: البديل إن كان يوم الربط المؤقت مطابقاً،
+        وإلا الأستاذ الأساسي. (الربط المؤقت انتهى بمجرد اختلاف اليوم.)
+        """
+        if self.substitute_teacher_id and self.substitute_date and date and self.substitute_date == date:
+            return self.substitute_teacher
+        return self.teacher
+
+    def is_substituted_on(self, date):
+        return bool(self.substitute_teacher_id and self.substitute_date and date and self.substitute_date == date)
 
     def attendance_rate(self, days=30):
         """نسبة الحضور خلال آخر عدد أيام محدد (احتساب: (حاضر+تأخر) / (حاضر+تأخر+غائب))"""
@@ -77,6 +96,9 @@ class Student(models.Model):
     notes = models.CharField('ملاحظات', max_length=255, blank=True)
     birth_date = models.DateField('تاريخ الميلاد', null=True, blank=True,
                                   help_text='يُستخدم لحساب العمر وفرز الطلاب في الإحصائيات.')
+    # الحاوية المؤقتة في لوحة الفرز: الطالب يبقى في حلقته في قاعدة البيانات لكنه يُخفى
+    # من صفحات الحضور/التسميع حتى يُسحب إلى حلقة أخرى (parked_at = وقت الوضع).
+    parked_at = models.DateTimeField('موضوع في الحاوية المؤقتة', null=True, blank=True)
     joined_at = models.DateTimeField('تاريخ الانضمام', auto_now_add=True)
     updated_at = models.DateTimeField('آخر تعديل', auto_now=True, null=True)
 
@@ -94,6 +116,35 @@ class Student(models.Model):
         if not self.birth_date:
             return None
         return age_from_birth_date(self.birth_date)
+
+    @property
+    def is_parked(self):
+        """هل الطالب موضوع مؤقتاً في الحاوية الفارغة بلوحة الفرز؟"""
+        return self.parked_at is not None
+
+    @property
+    def birth_year(self):
+        return self.birth_date.year if self.birth_date else None
+
+    def last_recitation(self):
+        return self.recitations.order_by('-date', '-id').first()
+
+    @property
+    def last_recited_page(self):
+        """رقم آخر صفحة سمّعها الطالب (None إن لم يسمّع بعد) — يظهر كوسم جانب اسمه."""
+        last = self.last_recitation()
+        if not last:
+            return None
+        from .quran import page_of
+        try:
+            return last.to_page or page_of(last.to_surah, last.to_ayah)
+        except Exception:
+            return None
+
+    @property
+    def last_recited_on(self):
+        last = self.last_recitation()
+        return last.date if last else None
 
     def attendance_rate(self, days=90):
         since = timezone.now().date() - timezone.timedelta(days=days)
@@ -320,8 +371,11 @@ class Sabr(models.Model):
 
 class Recitation(models.Model):
     """
-    تسميع: مقطع من القرآن الكريم سمّعه الطالب في حلقته بتاريخ محدد.
-    النطاق من (سورة، آية) إلى (سورة، آية) — وقد يمتد عبر عدة سور.
+    تسميع: ما سمّعه الطالب من القرآن الكريم بتاريخ محدد.
+
+    طريقتان:
+      • pages — «بالصفحات»: من صفحة … إلى صفحة (افتراضياً صفحة واحدة)، ويُشتق منها نطاق الآيات.
+      • surah — «بأسماء السور» (آخر جزأين: الملك ← الناس): يُختار اسم السورة ثم صفحة/صفحات منها.
     تُحفظ الحلقة وقت التسميع، فلا يتغيّر سجل التسميع القديم إن انتقل الطالب لحلقة أخرى.
     """
 
@@ -336,6 +390,10 @@ class Recitation(models.Model):
         ('acceptable', 'مقبول'),
         ('repeat', 'يحتاج إعادة'),
     ]
+    MODE_CHOICES = [
+        ('pages', 'بالصفحات'),
+        ('surah', 'بأسماء السور'),
+    ]
 
     student = models.ForeignKey(
         Student, verbose_name='الطالب',
@@ -347,10 +405,15 @@ class Recitation(models.Model):
     )
     date = models.DateField('تاريخ التسميع', default=timezone.localdate)
     kind = models.CharField('النوع', max_length=10, choices=KIND_CHOICES, default='new')
-    from_surah = models.PositiveSmallIntegerField('من سورة')
-    from_ayah = models.PositiveSmallIntegerField('من آية')
-    to_surah = models.PositiveSmallIntegerField('إلى سورة')
-    to_ayah = models.PositiveSmallIntegerField('إلى آية')
+    mode = models.CharField('طريقة التسميع', max_length=6, choices=MODE_CHOICES, default='pages')
+    from_page = models.PositiveSmallIntegerField('من صفحة', null=True, blank=True)
+    to_page = models.PositiveSmallIntegerField('إلى صفحة', null=True, blank=True)
+    surah = models.PositiveSmallIntegerField('السورة (وضع السور)', null=True, blank=True)
+    # نطاق الآيات — يُشتق تلقائياً من الصفحات، ويبقى محفوظاً للسجلات القديمة والتصدير
+    from_surah = models.PositiveSmallIntegerField('من سورة', null=True, blank=True)
+    from_ayah = models.PositiveSmallIntegerField('من آية', null=True, blank=True)
+    to_surah = models.PositiveSmallIntegerField('إلى سورة', null=True, blank=True)
+    to_ayah = models.PositiveSmallIntegerField('إلى آية', null=True, blank=True)
     grade = models.CharField('التقدير', max_length=12, choices=GRADE_CHOICES, blank=True, default='')
     notes = models.CharField('ملاحظات', max_length=255, blank=True, default='')
     created_at = models.DateTimeField('وقت التسجيل', auto_now_add=True)
@@ -363,8 +426,54 @@ class Recitation(models.Model):
     def __str__(self):
         return f'{self.student.name} — {self.range_display} — {self.date}'
 
+    # ── اشتقاق نطاق الآيات من الصفحات ──────────────────────────
+    def apply_pages(self):
+        """يحوّل صفحة البداية/النهاية إلى (سورة، آية) حتى تبقى سجلات الآيات متوافقة."""
+        from .quran import page_start, page_end, validate_range
+        if not (self.from_page and self.to_page):
+            return
+        fs, fa = page_start(self.from_page)
+        ts, ta = page_end(self.to_page)
+        if validate_range(fs, fa, ts, ta):
+            return
+        self.from_surah, self.from_ayah, self.to_surah, self.to_ayah = fs, fa, ts, ta
+
+    def save(self, *args, **kwargs):
+        if self.from_page and not self.to_page:
+            self.to_page = self.from_page
+        if self.from_page and self.to_page:
+            if self.to_page < self.from_page:
+                self.from_page, self.to_page = self.to_page, self.from_page
+            self.apply_pages()
+        super().save(*args, **kwargs)
+
+    # ── العرض ──────────────────────────────────────────────────
+    @property
+    def page_span(self):
+        if self.from_page and self.to_page:
+            return self.to_page - self.from_page + 1
+        return 0
+
+    @property
+    def surah_name(self):
+        from .quran import SURAH_NAME
+        n = self.surah or self.from_surah
+        return SURAH_NAME.get(n, '')
+
+    @property
+    def notes_display(self):
+        """الملاحظات للعرض بعد إخفاء بصمة منع التكرار [uid:…]."""
+        import re
+        return re.sub(r'^\[uid:[^\]]*\]\s*', '', self.notes or '')
+
     @property
     def range_display(self):
+        """نص مقروء للمقطع: «صفحة 5» / «صفحة 5–7» / «الملك: الأولى والثانية»."""
+        from .quran import page_range_display, surah_pages_display
+        if self.mode == 'surah' and self.surah and self.from_page:
+            return surah_pages_display(self.surah, self.from_page, self.to_page or self.from_page)
+        if self.from_page and self.to_page:
+            return page_range_display(self.from_page, self.to_page)
         from .quran import format_range
         return format_range(self.from_surah, self.from_ayah, self.to_surah, self.to_ayah)
 
@@ -372,3 +481,14 @@ class Recitation(models.Model):
     def ayah_count(self):
         from .quran import safe_ayah_span
         return safe_ayah_span(self.from_surah, self.from_ayah, self.to_surah, self.to_ayah)
+
+    @property
+    def last_page(self):
+        """رقم آخر صفحة في هذا التسميع (يُستخدم لوسم «آخر صفحة مسمّعة»)."""
+        if self.to_page:
+            return self.to_page
+        from .quran import page_of
+        try:
+            return page_of(self.to_surah, self.to_ayah)
+        except Exception:
+            return None

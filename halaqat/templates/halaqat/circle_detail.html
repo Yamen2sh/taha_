@@ -29,7 +29,9 @@
   <div class="info">
     <h2>{{ circle.name }}</h2>
     <div class="teacher">
-      {% if circle.teacher %}الأستاذ <a href="{% url 'teacher_profile' circle.teacher.id %}" class="student-link">{{ circle.teacher.name }}</a>{% else %}لا يوجد أستاذ محدد{% endif %}
+      {% if day_teacher %}الأستاذ <a href="{% url 'teacher_profile' day_teacher.id %}" class="student-link">{{ day_teacher.name }}</a>
+        {% if day_teacher_is_substitute %}<span class="mini-tag temp" title="أستاذ بديل في يوم الربط فقط">بديل اليوم</span>{% endif %}
+      {% else %}لا يوجد أستاذ محدد{% endif %}
       {% if attendance_rate_30d is not None %} · نسبة الحضور (30 يوم): {{ attendance_rate_30d }}%{% endif %}
     </div>
   </div>
@@ -54,28 +56,28 @@
 
 {% csrf_token %}
 
-{% if circle.teacher %}
+{% if day_teacher %}
 <div class="teacher-attendance-box" id="teacherBox" data-save-url="{% url 'save_attendance' circle.id %}" data-date="{{ selected_date|date:'Y-m-d' }}">
-  <div class="student-row teacher-row" data-kind="teacher" data-entity-id="{{ circle.teacher.id }}" data-save-url="{% url 'save_attendance' circle.id %}" data-date="{{ selected_date|date:'Y-m-d' }}">
+  <div class="student-row teacher-row" data-kind="teacher" data-entity-id="{{ day_teacher.id }}" data-save-url="{% url 'save_attendance' circle.id %}" data-date="{{ selected_date|date:'Y-m-d' }}">
     <div class="student-name">
       <div class="avatar teacher-avatar">👨‍🏫</div>
       <div>
-        <a href="{% url 'teacher_profile' circle.teacher.id %}" class="student-link">{{ circle.teacher.name }}</a>
-        <span class="role-tag">الأستاذ المسؤول</span>
+        <a href="{% url 'teacher_profile' day_teacher.id %}" class="student-link">{{ day_teacher.name }}</a>
+        <span class="role-tag">{% if day_teacher_is_substitute %}أستاذ بديل (يوم الربط){% else %}الأستاذ المسؤول{% endif %}</span>
       </div>
     </div>
     <div class="tristate">
-      <input type="radio" name="status_teacher_{{ circle.teacher.id }}" id="present_teacher_{{ circle.teacher.id }}" value="present" {% if teacher_status == 'present' %}checked{% endif %}>
-      <label for="present_teacher_{{ circle.teacher.id }}" class="present">حاضر</label>
+      <input type="radio" name="status_teacher_{{ day_teacher.id }}" id="present_teacher_{{ day_teacher.id }}" value="present" {% if teacher_status == 'present' %}checked{% endif %}>
+      <label for="present_teacher_{{ day_teacher.id }}" class="present">حاضر</label>
 
-      <input type="radio" name="status_teacher_{{ circle.teacher.id }}" id="late_teacher_{{ circle.teacher.id }}" value="late" {% if teacher_status == 'late' %}checked{% endif %}>
-      <label for="late_teacher_{{ circle.teacher.id }}" class="late">تأخر</label>
+      <input type="radio" name="status_teacher_{{ day_teacher.id }}" id="late_teacher_{{ day_teacher.id }}" value="late" {% if teacher_status == 'late' %}checked{% endif %}>
+      <label for="late_teacher_{{ day_teacher.id }}" class="late">تأخر</label>
 
-      <input type="radio" name="status_teacher_{{ circle.teacher.id }}" id="excused_teacher_{{ circle.teacher.id }}" value="excused" {% if teacher_status == 'excused' %}checked{% endif %}>
-      <label for="excused_teacher_{{ circle.teacher.id }}" class="excused">إذن</label>
+      <input type="radio" name="status_teacher_{{ day_teacher.id }}" id="excused_teacher_{{ day_teacher.id }}" value="excused" {% if teacher_status == 'excused' %}checked{% endif %}>
+      <label for="excused_teacher_{{ day_teacher.id }}" class="excused">إذن</label>
 
-      <input type="radio" name="status_teacher_{{ circle.teacher.id }}" id="absent_teacher_{{ circle.teacher.id }}" value="absent" {% if teacher_status == 'absent' %}checked{% endif %}>
-      <label for="absent_teacher_{{ circle.teacher.id }}" class="absent">غائب</label>
+      <input type="radio" name="status_teacher_{{ day_teacher.id }}" id="absent_teacher_{{ day_teacher.id }}" value="absent" {% if teacher_status == 'absent' %}checked{% endif %}>
+      <label for="absent_teacher_{{ day_teacher.id }}" class="absent">غائب</label>
     </div>
   </div>
 </div>
