@@ -1,10 +1,15 @@
+"""
+ترحيل 0009: جدول أسئلة المساعد الإحصائي (AssistantQuery).
+كان رقمه 0008 على main؛ أُعيد ترقيمه إلى 0009 لأنه يتفرّع بعد 0008
+(التسميع بالصفحات + الحاوية الفارغة + الربط المؤقت) عند الدمج.
+"""
 from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('halaqat', '0007_recitation'),
+        ('halaqat', '0008_pages_parking_and_teacher_links'),
     ]
 
     operations = [

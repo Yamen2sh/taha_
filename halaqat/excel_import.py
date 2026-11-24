@@ -295,9 +295,16 @@ def import_workbook(wb, mode='merge'):
             if key in rec_existing:
                 continue
             rec_existing.add(key)
+            # أعمدة الصفحات (O و P) — تُستخدم إن وُجدت لاستيراد التسميع بالصفحات كما هو
+            from_page = _xid(row, 14) or quran.page_of(from_surah, from_ayah)
+            to_page = _xid(row, 15) or quran.page_of(to_surah, to_ayah)
+            surah_mode = surah_no.get(_clean(_cell(row, 16))) if _clean(_cell(row, 16)) else None
             rec_objs.append(Recitation(
                 student=s, circle=circle or s.circle, date=d,
                 kind=kind_map.get(_clean(_cell(row, 3)), 'new'),
+                mode='surah' if surah_mode else 'pages',
+                surah=surah_mode,
+                from_page=from_page, to_page=to_page,
                 from_surah=from_surah, from_ayah=from_ayah, to_surah=to_surah, to_ayah=to_ayah,
                 grade=grade_map.get(_clean(_cell(row, 8)), ''), notes=_clean(_cell(row, 9))[:255]))
         Recitation.objects.bulk_create(rec_objs, batch_size=500)

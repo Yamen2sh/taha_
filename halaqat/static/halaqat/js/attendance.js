@@ -1,6 +1,7 @@
 // حفظ تلقائي لحالة الحضور فور الضغط على الخيار - بدون زر حفظ
 // يعمل بشكل عام على أي صف يحمل data-save-url / data-kind / data-entity-id / data-date
-// (صفحة تفاصيل الحلقة وصفحة الغائبين كلتاهما تستخدم نفس الآلية)
+// (صفحة الحلقة، صفحة «الدورات القرآنية» المدموجة، وصفحة الغائبين تستخدم نفس الآلية)
+// الحفظ يمرّ عبر TahaSync.post: إن انقطع الاتصال يُحفظ محلياً ويُرسل تلقائياً عند رجوعه.
 document.addEventListener('DOMContentLoaded', function () {
   const csrfInput = document.querySelector('input[name="csrfmiddlewaretoken"]');
   const toast = document.getElementById('save-toast');
@@ -28,9 +29,10 @@ document.addEventListener('DOMContentLoaded', function () {
     if (e) e.textContent = counts.excused;
   }
 
-  document.body.addEventListener('change', function (e) {
+  /* التقاط التغيير في أي مكان (الصفحة أو النافذة المنبثقة) */
+  document.addEventListener('change', function (e) {
     const input = e.target;
-    if (input.type !== 'radio') return;
+    if (input.type !== 'radio' || !input.name.startsWith('status_')) return;
 
     const row = input.closest('[data-save-url]');
     if (!row) return;
@@ -46,39 +48,41 @@ document.addEventListener('DOMContentLoaded', function () {
     formData.append('status', status);
     formData.append('date', date);
 
-    fetch(saveUrl, {
-      method: 'POST',
-      headers: {
-        'X-CSRFToken': csrfToken,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: formData.toString(),
-    })
-      .then((res) => res.json())
-      .then((data) => {
-        row.classList.remove('saving');
-        if (data.ok) {
-          if (data.counts) updateCounts(data.counts);
-          showToast(true);
-          row.classList.remove('unrecorded-row');
+    // مفتاح يجعل آخر حالة لنفس الطالب هي التي تُرسل (لا نُغرق السيرفر بتغييرات متتالية)
+    const opts = {key: `att:${kind || 'student'}:${entityId}:${date}`};
 
-          // في صفحة الغائبين: إن تغيّرت حالة طالب من "غائب/إذن" لحالة أخرى، أخفِ صفه تلقائياً
-          if (row.classList.contains('resolvable-row')) {
-            const originalStatus = row.dataset.originalStatus;
-            if (status !== originalStatus) {
-              row.classList.add('resolved');
-              setTimeout(() => {
-                row.remove();
-              }, 450);
-            }
-          }
-        } else {
-          showToast(false, data.error || 'تعذّر الحفظ');
+    const send = window.TahaSync
+      ? window.TahaSync.post(saveUrl, formData, opts)
+      : fetch(saveUrl, {
+          method: 'POST',
+          headers: {'X-CSRFToken': csrfToken, 'Content-Type': 'application/x-www-form-urlencoded'},
+          body: formData.toString(),
+        }).then(r => r.json());
+
+    send.then((data) => {
+      row.classList.remove('saving');
+      if (data.counts) updateCounts(data.counts);
+      if (data.queued) {
+        showToast(true, '📴 حُفظ على الجهاز — سيُرسل عند رجوع الاتصال');
+      } else {
+        showToast(true);
+      }
+      row.classList.remove('unrecorded-row');
+
+      // في صفحة الغائبين: إن تغيّرت حالة طالب من "غائب/إذن" لحالة أخرى، أخفِ صفه تلقائياً
+      if (row.classList.contains('resolvable-row')) {
+        const originalStatus = row.dataset.originalStatus;
+        if (status !== originalStatus) {
+          row.classList.add('resolved');
+          setTimeout(() => row.remove(), 450);
         }
-      })
-      .catch(() => {
-        row.classList.remove('saving');
-        showToast(false);
-      });
+      }
+    }).catch((err) => {
+      row.classList.remove('saving');
+      showToast(false, (err && err.message) || 'تعذّر الحفظ');
+      const label = row.querySelector(`label[for="${input.id}"]`);
+      if (label) label.classList.add('shake');
+      setTimeout(() => label && label.classList.remove('shake'), 600);
+    });
   });
 });

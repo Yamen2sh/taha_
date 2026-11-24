@@ -8,6 +8,9 @@
 فقط يُسجَّل في الـ logger لمراجعته لاحقاً.
 """
 import logging
+import os
+import threading
+import time
 
 import requests
 from django.conf import settings
@@ -87,3 +90,49 @@ def send_telegram_document_bytes(file_bytes, filename, caption=''):
     except requests.RequestException as exc:
         logger.warning('خطأ أثناء إرسال ملف تلغرام: %s', exc)
         return False
+
+
+# ══════════════════════════════════════════════════════════════
+#  تجميع سجل العمليات: رسالة واحدة مختصرة كل فترة بدل رسالة لكل عملية
+#  (يقلّل عدد الطلبات على تلغرام ويجعل السجل مقروءاً)
+# ══════════════════════════════════════════════════════════════
+
+BATCH_DELAY = float(os.environ.get('TELEGRAM_BATCH_SECONDS', '120'))   # ثوانٍ
+MAX_LINES = 30                     # أقصى عدد سطور في الرسالة الواحدة
+_QUEUE = []                        # [(نص السطر، الوقت)]
+_GLOCK = threading.Lock()
+_GTIMER = [None]
+
+
+def _flush_queue():
+    """يرسل كل ما تجمّع في رسالة واحدة (بلا تكرار لاسم المستخدم/الوقت في كل سطر)."""
+    with _GLOCK:
+        items = list(_QUEUE)
+        _QUEUE.clear()
+        _GTIMER[0] = None
+    if not items:
+        return
+    lines = [f'📋 {len(items)} عملية {"(آخر " + str(MAX_LINES) + ")" if len(items) > MAX_LINES else ""}'.strip(' ')]
+    lines += [f'• {text}' for text, _ in items[:MAX_LINES]]
+    if len(items) > MAX_LINES:
+        lines.append(f'… و{len(items) - MAX_LINES} عملية أخرى')
+    lines.append(f'🕐 {time.strftime("%Y-%m-%d %H:%M")}')
+    send_telegram_message('\n'.join(lines))
+
+
+def queue_telegram_line(line, who=None, delay=None):
+    """
+    يضيف سطراً إلى السجل المجمَّع (بلا طلب شبكة الآن). تُرسل كل الأسطر في رسالة واحدة
+    بعد `delay` ثانية (افتراضياً TELEGRAM_BATCH_SECONDS). صامت تماماً عند الفشل.
+    """
+    if not _is_configured():
+        logger.info('Telegram غير مُهيأ - تم تجاهل سطر السجل: %s', line)
+        return
+    text = line if not who else f'{line} ({who})'
+    with _GLOCK:
+        _QUEUE.append((text[:200], time.time()))
+        if _GTIMER[0] is None:
+            timer = threading.Timer(delay if delay is not None else BATCH_DELAY, _flush_queue)
+            timer.daemon = True
+            _GTIMER[0] = timer
+            timer.start()

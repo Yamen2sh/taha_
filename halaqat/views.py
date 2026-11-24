@@ -17,6 +17,7 @@ from django.urls import reverse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
 from django.db import transaction
+from django.db.models import Count
 from django.views.decorators.http import require_POST
 
 from . import ai_export, ai_query, cache_utils, quran
@@ -26,7 +27,8 @@ from .models import (
 )
 from .forms import CircleForm, StudentForm, CourseForm, WhatsAppAbsentForm, ViewerAccountForm
 from .roles import VIEWER_GROUP, is_viewer
-from .telegram_utils import send_telegram_message, send_telegram_document_bytes
+from .telegram_utils import (send_telegram_message, send_telegram_document_bytes,
+                             queue_telegram_line)
 from .whatsapp_utils import normalize_chat_id, send_whatsapp_text
 
 
@@ -53,13 +55,21 @@ def home(request):
     circle_rows, done_circles = [], 0
     for c in circles:
         recorded = rec_by_circle.get(c['id'], 0)
-        teacher_id = c['teacher']['id'] if c['teacher'] else None
+        # الأستاذ المسؤول اليوم (يحلّ البديل يوم الربط المؤقت فقط)
+        sub = c.get('substitute')
+        is_sub = bool(sub and sub.get('date') == selected_date.isoformat())
+        if is_sub:
+            teacher_id, teacher_name = sub['id'], sub['name']
+        else:
+            teacher_id = c['teacher']['id'] if c['teacher'] else None
+            teacher_name = c['teacher']['name'] if c['teacher'] else ''
         t_ok = (teacher_id, c['id']) in teacher_done if teacher_id else None
         complete = c['students'] > 0 and recorded >= c['students'] and t_ok is not False
         if complete:
             done_circles += 1
         circle_rows.append({
             'circle': c, 'students': c['students'], 'recorded': recorded, 'teacher_ok': t_ok,
+            'teacher_name': teacher_name, 'teacher_id': teacher_id, 'is_substitute': bool(is_sub),
             'state': 'ok' if complete else ('part' if recorded or t_ok else 'no'),
         })
 
@@ -77,6 +87,20 @@ def home(request):
         for co in Course.objects.filter(id__in=course_rec.keys()).annotate(n=Count('students')):
             course_rows.append({'course': co, 'students': co.n, 'recorded': course_rec[co.id],
                                 'state': 'ok' if course_rec[co.id] >= co.n else 'part'})
+
+    # ── إحصائيات المحفوظات (التسميع) في اليوم المحدد ──
+    rec_qs = Recitation.objects.filter(date=selected_date)
+    rec_stats = rec_qs.aggregate(n=Count('id'))
+    rec_by_circle_today = Counter(dict(
+        rec_qs.values('circle_id').order_by().annotate(c=Count('id')).values_list('circle_id', 'c')))
+    rec_rows = [{'circle': c, 'count': rec_by_circle_today.get(c['id'], 0)} for c in circles]
+    recitation = {
+        'count': rec_stats['n'] or 0,                     # عدد التسميعات المسجّلة اليوم
+        'students': rec_qs.values('student_id').order_by().distinct().count(),
+        'pages': sum(r.page_span for r in rec_qs.only('from_page', 'to_page')),
+        'total_all': Recitation.objects.count(),
+        'rows': rec_rows,
+    }
 
     total_students = sum(c['students'] for c in circles)
     total_recorded = sum(rec_by_circle.values())
@@ -99,8 +123,21 @@ def home(request):
         },
         'total_students': total_students,
         'total_recorded': total_recorded,
+        'recitation': recitation,
     }
     return render(request, 'halaqat/home.html', context)
+
+
+@login_required
+def service_worker(request):
+    """ملف Service Worker من جِذر الموقع (ليكون نطاقه كل الصفحات)."""
+    path = settings.BASE_DIR / 'halaqat' / 'static' / 'halaqat' / 'sw.js'
+    with open(path, 'r', encoding='utf-8') as fh:
+        body = fh.read()
+    resp = HttpResponse(body, content_type='application/javascript; charset=utf-8')
+    resp['Service-Worker-Allowed'] = '/'
+    resp['Cache-Control'] = 'no-cache'
+    return resp
 
 
 @login_required
@@ -211,7 +248,7 @@ def _attendance_history(model, scope, student_ids, before_date, weeks=HISTORY_WE
 @login_required
 def circle_detail(request, circle_id):
     circle = get_object_or_404(Circle, pk=circle_id)
-    students = circle.students.all()
+    students = circle.students.filter(parked_at__isnull=True)
 
     # تحديد التاريخ المعروض (اليوم افتراضياً، أو من ?date=YYYY-MM-DD)
     date_str = request.GET.get('date')
@@ -243,10 +280,12 @@ def circle_detail(request, circle_id):
     absent_count = sum(1 for s in student_rows if s['status'] == 'absent')
     excused_count = sum(1 for s in student_rows if s['status'] == 'excused')
 
+    # الأستاذ المسؤول في هذا اليوم (يحلّ الأستاذ البديل يوم الربط المؤقت فقط)
+    day_teacher = circle.teacher_on(selected_date)
     teacher_status = ''
-    if circle.teacher:
+    if day_teacher:
         ta = TeacherAttendance.objects.filter(
-            teacher=circle.teacher, circle=circle, date=selected_date
+            teacher=day_teacher, circle=circle, date=selected_date
         ).first()
         teacher_status = ta.status if ta else ''
 
@@ -267,6 +306,9 @@ def circle_detail(request, circle_id):
         'excused_count': excused_count,
         'attendance_rate_30d': circle.attendance_rate(30),
         'teacher_status': teacher_status,
+        'day_teacher': day_teacher,
+        'day_teacher_is_substitute': circle.is_substituted_on(selected_date),
+        'substitute_note': (circle.substitute_teacher if circle.is_substituted_on(selected_date) else None),
         'all_circles': all_circles,
         'prev_circle': prev_circle,
         'next_circle': next_circle,
@@ -294,10 +336,11 @@ def save_attendance(request, circle_id):
         return JsonResponse({'ok': False, 'error': 'تاريخ غير صالح'}, status=400)
 
     if kind == 'teacher':
-        if not circle.teacher or str(circle.teacher.id) != str(entity_id):
-            return JsonResponse({'ok': False, 'error': 'لا يوجد أستاذ مطابق لهذه الحلقة'}, status=400)
+        teacher = circle.teacher_on(selected_date)
+        if not teacher or str(teacher.id) != str(entity_id):
+            return JsonResponse({'ok': False, 'error': 'لا يوجد أستاذ مطابق لهذه الحلقة في هذا اليوم'}, status=400)
         TeacherAttendance.objects.update_or_create(
-            teacher=circle.teacher, circle=circle, date=selected_date,
+            teacher=teacher, circle=circle, date=selected_date,
             defaults={'status': status},
         )
     else:
@@ -810,12 +853,14 @@ def _parse_date_param(request, param='date'):
 
 
 def _log_admin_action(request, text):
-    """يرسل سجل عملية (حذف/تعديل) من لوحة التحكم إلى بوت التلغرام، إن كان مفعّلاً."""
+    """
+    سجل عملية (إضافة/حذف/تعديل) من لوحة التحكم — يُجمَّع مع بقية العمليات وتُرسل رسالة
+    واحدة مختصرة كل دقيقتين (تقليل الطلبات والكلام: السطر فقط + من قام به).
+    """
     if not getattr(settings, 'TELEGRAM_LOG_ADMIN_ACTIONS', False):
         return
     who = request.user.get_username() if request.user.is_authenticated else 'غير معروف'
-    when = timezone.now().strftime('%Y-%m-%d %H:%M')
-    send_telegram_message(f'{text}\nبواسطة: {who}\nالوقت: {when}')
+    queue_telegram_line(text, who=who)
 
 
 @login_required
@@ -900,8 +945,15 @@ def students_index(request):
     version = data['v']
     if request.GET.get('v') == version:
         return JsonResponse({'same': True, 'v': version})
+    # صفوف إضافية للعرض المحلي (آخر صفحة مسمّعة وتاريخ الميلاد) — بلا أي طلب للسيرفر لاحقاً
+    extra = {r[0]: r[4:] for r in cache_utils.students_search_rows()}
+    rows = []
+    for sid, name, cid, cname in data['rows']:
+        page, birth, last_on = extra.get(sid, (None, None, None))
+        rows.append([sid, name, cid, cname, page, birth, last_on])
+    payload = json.dumps(rows, ensure_ascii=False, separators=(',', ':'))
     resp = HttpResponse(
-        '{"v":"%s","students":%s}' % (version, data['payload']),
+        '{"v":"%s","students":%s}' % (version, payload),
         content_type='application/json; charset=utf-8',
     )
     resp['Cache-Control'] = 'private, no-cache'
@@ -1045,13 +1097,15 @@ def _student_recitation_stats(student):
     """ملخص تسميع الطالب: عدد المرات، مجموع الآيات، آخر تسميع، والسجل الأخير."""
     today = timezone.localdate()
     since = today - datetime.timedelta(days=30)
-    rows = list(student.recitations.values_list('from_surah', 'from_ayah', 'to_surah', 'to_ayah', 'date'))
+    rows = list(student.recitations.values_list('from_surah', 'from_ayah', 'to_surah', 'to_ayah', 'date',
+                                                'from_page', 'to_page'))
     items = list(student.recitations.all()[:30])
     return {
         'items': items,
         'count': len(rows),
         'count_30': sum(1 for r in rows if r[4] >= since),
         'ayahs': sum(quran.safe_ayah_span(*r[:4]) for r in rows),
+        'pages': sum((r[6] - r[5] + 1) if (r[5] and r[6]) else 0 for r in rows),
         'days_since_last': (today - items[0].date).days if items else None,
     }
 
@@ -1347,14 +1401,17 @@ def send_all_data_telegram(request):
     ws_rec = wb.create_sheet('التسميع')
     _style_sheet(ws_rec,
                  ['التاريخ', 'اسم الطالب', 'الحلقة', 'النوع', 'من سورة', 'من آية', 'إلى سورة', 'إلى آية',
-                  'التقدير', 'ملاحظات', 'معرّف الطالب', 'معرّف الحلقة', 'رقم سورة البداية', 'رقم سورة النهاية'],
-                 [14, 30, 28, 12, 14, 9, 14, 9, 12, 40, 11, 11, 12, 12])
+                  'التقدير', 'ملاحظات', 'معرّف الطالب', 'معرّف الحلقة', 'رقم سورة البداية', 'رقم سورة النهاية',
+                  'من صفحة', 'إلى صفحة', 'السورة (وضع السور)', 'طريقة التسميع'],
+                 [14, 30, 28, 12, 14, 9, 14, 9, 12, 40, 11, 11, 12, 12, 10, 10, 14, 14])
     for r in Recitation.objects.select_related('student', 'circle').order_by('-date', 'student__name', 'id'):
         ws_rec.append([r.date.isoformat(), r.student.name, r.circle.name, r.get_kind_display(),
                        quran.SURAH_NAME.get(r.from_surah, ''), r.from_ayah,
                        quran.SURAH_NAME.get(r.to_surah, ''), r.to_ayah,
                        r.get_grade_display() if r.grade else '', r.notes or '',
-                       r.student_id, r.circle_id, r.from_surah, r.to_surah])
+                       r.student_id, r.circle_id, r.from_surah, r.to_surah,
+                       r.from_page, r.to_page, quran.SURAH_NAME.get(r.surah, '') if r.surah else '',
+                       r.get_mode_display()])
 
     # ── تجميع الملف وإرساله ───────────────────────────────────
     excel_buffer = io.BytesIO()
@@ -2357,49 +2414,139 @@ def sabr_delete(request, sabr_id):
 #  فرز الطلاب بالسحب والإفلات (لوحة التحكم): كل الحلقات حاويات، والطالب بطاقة تُنقل بينها
 # ============================================================
 
-_MOVE_LOG, _MOVE_LOCK, _MOVE_TIMER = [], threading.Lock(), [None]
-
-
-def _flush_student_moves():
-    with _MOVE_LOCK:
-        items = list(_MOVE_LOG)
-        _MOVE_LOG.clear()
-        _MOVE_TIMER[0] = None
-    if not items:
-        return
-    lines = [f'🔀 نقل طلاب بين الحلقات ({len(items)}):'] + [f'• {text}' for _, text in items[:40]]
-    if len(items) > 40:
-        lines.append(f'… و{len(items) - 40} عملية أخرى')
-    who = '، '.join(sorted({w for w, _ in items}))
-    send_telegram_message('\n'.join(lines) + f'\nبواسطة: {who}\nالوقت: {timezone.localtime():%Y-%m-%d %H:%M}')
-
-
 def _log_student_move(request, text):
-    """يجمع عمليات النقل ويرسلها لتلغرام رسالةً واحدة بعد 20 ثانية (بلا إغراق، ودون تأخير الاستجابة)."""
+    """
+    عمليات النقل تدخل نفس السجل المجمَّع (رسالة واحدة مختصرة لكل العمليات معاً،
+    بعد دقيقتين) بدل رسالة مستقلة لكل حركة.
+    """
     if not getattr(settings, 'TELEGRAM_LOG_ADMIN_ACTIONS', False):
         return
     who = request.user.get_username() if request.user.is_authenticated else 'غير معروف'
-    with _MOVE_LOCK:
-        _MOVE_LOG.append((who, text))
-        if _MOVE_TIMER[0] is None:
-            timer = threading.Timer(20.0, _flush_student_moves)
-            timer.daemon = True
-            _MOVE_TIMER[0] = timer
-            timer.start()
+    queue_telegram_line('🔀 ' + text, who=who)
+
+
+@login_required
+def teacher_links_page(request):
+    """
+    ربط كل أستاذ بحلقته — واجهة أفقية مبسّطة شبيهة بلوحة الفرز:
+    بطاقة لكل حلقة مع أستاذها، ويمكن ربط حلقة بأستاذ آخر بشكل مؤقت ليوم واحد فقط
+    (يرجع الأستاذ الأساسي تلقائياً بعد انتهاء اليوم).
+    """
+    circles = Circle.objects.select_related('teacher', 'substitute_teacher').order_by('display_order', 'name', 'id')
+    teachers = list(Teacher.objects.order_by('name'))
+    rows = [{
+        'circle': c,
+        'teacher': c.teacher,
+        'substitute': c.substitute_teacher,
+        'substitute_date': c.substitute_date,
+        'students': c.students.filter(parked_at__isnull=True).count(),
+    } for c in circles]
+    return render(request, 'halaqat/teacher_links.html', {
+        'active_nav': 'admin',
+        'rows': rows,
+        'teachers': teachers,
+        'today': timezone.localdate(),
+        'link_url': reverse('teacher_link_set'),
+        'active_subs': sum(1 for r in rows if r['substitute_date'] == timezone.localdate()),
+    })
+
+
+@login_required
+@require_POST
+def teacher_link_set(request):
+    """
+    يضبط أستاذ الحلقة:
+      • mode=permanent: الأستاذ الأساسي (ويُلغى أي ربط مؤقت).
+      • mode=temporary: أستاذ بديل ليوم محدد فقط (افتراضياً اليوم).
+      • mode=clear: إزالة الأستاذ الأساسي.
+    """
+    cid = request.POST.get('circle_id')
+    circle = get_object_or_404(Circle, pk=cid)
+    mode = request.POST.get('mode') or 'permanent'
+    tid = (request.POST.get('teacher_id') or '').strip()
+    new_teacher = (request.POST.get('new_teacher_name') or '').strip()
+    teacher = Teacher.objects.filter(pk=tid).first() if tid else None
+    if new_teacher:
+        teacher, _ = Teacher.objects.get_or_create(name=new_teacher[:150])
+        _log_admin_action(request, f'➕ إضافة أستاذ: {teacher.name}')
+
+    if mode == 'temporary':
+        day = _parse_iso(request.POST.get('date') or '') or timezone.localdate()
+        circle.substitute_teacher = teacher
+        circle.substitute_date = day if teacher else None
+        circle.save(update_fields=['substitute_teacher', 'substitute_date'])
+        msg = (f'🔗 ربط مؤقت: {teacher.name} ← «{circle.name}» يوم {day}' if teacher
+               else f'↩ إلغاء الربط المؤقت لـ «{circle.name}»')
+    elif mode == 'clear':
+        circle.teacher = None
+        circle.substitute_teacher = None
+        circle.substitute_date = None
+        circle.save(update_fields=['teacher', 'substitute_teacher', 'substitute_date'])
+        msg = f'➖ إزالة أستاذ «{circle.name}»'
+    else:
+        circle.teacher = teacher
+        circle.substitute_teacher = None
+        circle.substitute_date = None
+        circle.save(update_fields=['teacher', 'substitute_teacher', 'substitute_date'])
+        msg = f'🔗 ربط: {teacher.name if teacher else "بلا أستاذ"} ← «{circle.name}»'
+    _log_admin_action(request, msg)
+
+    return JsonResponse({'ok': True, 'circle': {
+        'id': circle.id, 'name': circle.name,
+        'teacher': circle.teacher.name if circle.teacher else '',
+        'teacher_id': circle.teacher_id,
+        'substitute': circle.substitute_teacher.name if circle.substitute_teacher else '',
+        'substitute_id': circle.substitute_teacher_id,
+        'substitute_date': circle.substitute_date.isoformat() if circle.substitute_date else '',
+        'is_sub_now': circle.is_substituted_on(timezone.localdate()),
+    }})
 
 
 @login_required
 def sort_students_page(request):
-    """لوحة فرز الطلاب: حاوية كبيرة لكل حلقة، وكل طالب بطاقة تُسحب من حلقة إلى أخرى."""
+    """
+    لوحة الفرز: حاوية كبيرة لكل حلقة + حاوية فارغة مؤقتة (طلاب بلا حلقة فعلية حتى يُسحبوا)،
+    وبطاقات الأساتذة بلون مختلف (كادر بلا حلقة يبقى في الحاوية الفارغة)، وإضافة طالب/أستاذ/حلقة من نفس الصفحة.
+    """
     circles = list(Circle.objects.select_related('teacher').order_by('display_order', 'name', 'id'))
-    by_circle = {c.id: [] for c in circles}
+    from .quran import page_of
+    # آخر صفحة مسمّعة لكل طالب (استعلام واحد)
+    last = {}
+    for sid, rid, date, to_page, ts, ta in (Student.objects.filter(recitations__isnull=False).order_by()
+            .values_list('id', 'recitations__id', 'recitations__date',
+                         'recitations__to_page', 'recitations__to_surah', 'recitations__to_ayah')):
+        cur = last.get(sid)
+        if cur is None or (date, rid) > (cur[0], cur[1]):
+            last[sid] = (date, rid, to_page, ts, ta)
+
+    by_circle, parked = {c.id: [] for c in circles}, []
     total = 0
-    for sid, name, cid in Student.objects.order_by('name').values_list('id', 'name', 'circle_id'):
-        by_circle.setdefault(cid, []).append({'id': sid, 'name': name})
+    for sid, name, cid, birth, parked_at in (Student.objects.order_by('name')
+            .values_list('id', 'name', 'circle_id', 'birth_date', 'parked_at')):
+        rec = last.get(sid)
+        card = {'id': sid, 'name': name,
+                'last_page': (rec[2] or page_of(rec[3], rec[4])) if rec else None,
+                'birth_year': birth.year if birth else None,
+                'parked': parked_at is not None}
         total += 1
+        if parked_at is not None:
+            parked.append(card)
+        else:
+            by_circle.setdefault(cid, []).append(card)
+
+    teacher_cards = list(Teacher.objects.annotate(
+        n_circles=Count('circles', distinct=True), n_courses=Count('courses', distinct=True)
+    ).order_by('name').values('id', 'name', 'n_circles', 'n_courses'))
+    board_teachers = [t for t in teacher_cards if t['n_circles'] or t['n_courses']]
+    free_teachers_cards = [t for t in teacher_cards if not t['n_circles'] and not t['n_courses']]
+
     return render(request, 'halaqat/sort_students.html', {
         'boards': [{'circle': c, 'students': by_circle.get(c.id, [])} for c in circles],
+        'parked': parked,
+        'teachers': board_teachers,
+        'free_teachers': free_teachers_cards,
         'total_students': total,
+        'total_parked': len(parked),
         'active_nav': 'admin',
     })
 
@@ -2407,28 +2554,135 @@ def sort_students_page(request):
 @login_required
 @require_POST
 def sort_students_move(request):
-    """ينقل طالباً إلى حلقة أخرى (يُستدعى عند إفلات البطاقة). سجلات حضوره السابقة تبقى كما هي."""
-    from django.db.models import Count
+    """
+    ينقل طالباً: إلى حلقة أخرى (سجلات حضوره السابقة تبقى)، أو إلى الحاوية الفارغة (parked،
+    يُخفى من الحضور/التسميع حتى يُعاد إلى حلقة). circle_id = "park" للوضع في الحاوية.
+    """
     try:
         student_id = int(request.POST.get('student_id', ''))
-        circle_id = int(request.POST.get('circle_id', ''))
     except ValueError:
         return JsonResponse({'ok': False, 'error': 'بيانات غير صالحة'}, status=400)
+    target_raw = (request.POST.get('circle_id') or '').strip()
     student = get_object_or_404(Student.objects.select_related('circle'), pk=student_id)
-    target = get_object_or_404(Circle, pk=circle_id)
     old = student.circle
-    if old.id != target.id:
+    parking = target_raw in ('park', '0', '')
+
+    if parking:
+        if student.parked_at is None:
+            student.parked_at = timezone.now()
+            student.save(update_fields=['parked_at', 'updated_at'])
+            _log_student_move(request, f'{student.name}: أُخرج من «{old.name}» إلى الحاوية الفارغة')
+        target_id, target_name = 'park', 'الحاوية الفارغة'
+    else:
+        try:
+            target_id = int(target_raw)
+        except ValueError:
+            return JsonResponse({'ok': False, 'error': 'بيانات غير صالحة'}, status=400)
+        target = get_object_or_404(Circle, pk=target_id)
+        target_name = target.name
+        changed = old.id != target.id or student.parked_at is not None
         student.circle = target
-        student.save(update_fields=['circle', 'updated_at'])
-        _log_student_move(request, f'{student.name}: «{old.name}» ← «{target.name}»')
-    counts = dict(Student.objects.filter(circle_id__in=[old.id, target.id])
-                  .order_by().values('circle_id').annotate(n=Count('id')).values_list('circle_id', 'n'))
+        student.parked_at = None
+        if changed:
+            student.save(update_fields=['circle', 'parked_at', 'updated_at'])
+            _log_student_move(request, f'{student.name}: «{old.name}» ← «{target.name}»')
+
+    counts = dict(Student.objects.filter(circle_id=old.id, parked_at__isnull=True)
+                  .values('circle_id').annotate(n=Count('id')).values_list('circle_id', 'n'))
+    parked_count = Student.objects.filter(parked_at__isnull=False).count()
     return JsonResponse({
         'ok': True,
         'student': {'id': student.id, 'name': student.name},
         'from': {'id': old.id, 'name': old.name, 'count': counts.get(old.id, 0)},
-        'to': {'id': target.id, 'name': target.name, 'count': counts.get(target.id, 0)},
+        'to': {'id': target_id, 'name': target_name,
+               'count': parked_count if parking else counts.get(target_id, 0)},
+        'parked_count': parked_count,
     })
+
+
+@login_required
+@require_POST
+def sort_students_add(request):
+    """
+    إضافة سريعة من داخل لوحة الفرز (بلا مغادرة الصفحة):
+      kind=student: name + circle (أو park للحاوية الفارغة) [+ birth_date]
+      kind=teacher: name [+ phone]
+      kind=circle : name [+ teacher_id]
+    تعيد بيانات البطاقة الجديدة لتُدرج في مكانها.
+    """
+    kind = request.POST.get('kind')
+    name = (request.POST.get('name') or '').strip()
+    if not name:
+        return JsonResponse({'ok': False, 'error': 'الاسم مطلوب'}, status=400)
+
+    if kind == 'teacher':
+        teacher = Teacher.objects.create(name=name[:150], phone=(request.POST.get('phone') or '')[:20])
+        _log_admin_action(request, f'➕ إضافة أستاذ: {teacher.name}')
+        return JsonResponse({'ok': True, 'teacher': {'id': teacher.id, 'name': teacher.name}})
+
+    if kind == 'circle':
+        teacher = None
+        tid = request.POST.get('teacher_id') or ''
+        if tid:
+            teacher = Teacher.objects.filter(pk=tid).first()
+        circle = Circle.objects.create(name=name[:150], teacher=teacher)
+        _log_admin_action(request, f'➕ إضافة حلقة: {circle.name}' + (f' ({teacher.name})' if teacher else ''))
+        return JsonResponse({'ok': True, 'circle': {
+            'id': circle.id, 'name': circle.name,
+            'teacher': teacher.name if teacher else '',
+            'teacher_id': teacher.id if teacher else None,
+        }})
+
+    if kind == 'student':
+        circle_raw = (request.POST.get('circle_id') or '').strip()
+        parking = circle_raw in ('park', '0', '')
+        circle = None if parking else Circle.objects.filter(pk=circle_raw).first()
+        if not parking and circle is None:
+            return JsonResponse({'ok': False, 'error': 'اختر الحلقة'}, status=400)
+        birth = _parse_iso((request.POST.get('birth_date') or '').strip())
+        # الحاوية الفارغة تحتاج حلقة مرجعية (الحقل إلزامي) — نستخدم أول حلقة مع وضع الطالب «مؤقتاً»
+        holder = circle or Circle.objects.order_by('display_order', 'id').first()
+        if holder is None:
+            return JsonResponse({'ok': False, 'error': 'أضف حلقة أولاً (لا توجد أي حلقة)'}, status=400)
+        student = Student.objects.create(
+            name=name[:150], circle=holder,
+            birth_date=birth, parked_at=timezone.now() if parking else None,
+        )
+        _log_admin_action(request, '➕ إضافة طالب: ' + student.name +
+                          (' — الحاوية الفارغة' if parking else f' — {student.circle.name}'))
+        return JsonResponse({'ok': True, 'student': {
+            'id': student.id, 'name': student.name, 'last_page': None,
+            'birth_year': birth.year if birth else None, 'parked': parking,
+            'circle_id': 'park' if parking else student.circle_id,
+        }})
+
+    if kind == 'link':       # ربط أستاذ بحلقة (أساسي أو بديل ليوم واحد)
+        cid = request.POST.get('circle_id')
+        tid = request.POST.get('teacher_id') or ''
+        circle = get_object_or_404(Circle, pk=cid)
+        teacher = Teacher.objects.filter(pk=tid).first() if tid else None
+        if request.POST.get('temporary') in ('1', 'true', 'on'):
+            circle.substitute_teacher = teacher
+            circle.substitute_date = _parse_iso(request.POST.get('date') or '') or timezone.localdate()
+            circle.save(update_fields=['substitute_teacher', 'substitute_date'])
+            _log_admin_action(request, f'🔗 ربط مؤقت: {teacher.name if teacher else "بلا أستاذ"} ← «{circle.name}» '
+                                       f'يوم {circle.substitute_date}')
+        else:
+            circle.teacher = teacher
+            circle.substitute_teacher = None
+            circle.substitute_date = None
+            circle.save(update_fields=['teacher', 'substitute_teacher', 'substitute_date'])
+            _log_admin_action(request, f'🔗 ربط أستاذ: {teacher.name if teacher else "بلا أستاذ"} ← «{circle.name}»')
+        return JsonResponse({'ok': True, 'circle': {
+            'id': circle.id, 'name': circle.name,
+            'teacher': circle.teacher.name if circle.teacher else '',
+            'teacher_id': circle.teacher_id,
+            'substitute': (circle.substitute_teacher.name if circle.substitute_teacher else None),
+            'substitute_id': circle.substitute_teacher_id,
+            'substitute_date': circle.substitute_date.isoformat() if circle.substitute_date else None,
+        }})
+
+    return JsonResponse({'ok': False, 'error': 'نوع غير معروف'}, status=400)
 
 
 # ============================================================
@@ -2442,11 +2696,14 @@ def _recitation_item(r, today):
         'date_display': r.date.strftime('%Y-%m-%d'),
         'days_ago': (today - r.date).days,
         'kind': r.kind, 'kind_display': r.get_kind_display(),
+        'mode': r.mode or 'pages',
+        'from_page': r.from_page, 'to_page': r.to_page, 'pages': r.page_span,
+        'surah': r.surah, 'surah_name': r.surah_name,
         'from_surah': r.from_surah, 'from_ayah': r.from_ayah,
         'to_surah': r.to_surah, 'to_ayah': r.to_ayah,
         'range': r.range_display, 'ayahs': r.ayah_count,
         'grade': r.grade, 'grade_display': r.get_grade_display() if r.grade else '',
-        'notes': r.notes,
+        'notes': r.notes_display,
     }
 
 
@@ -2470,7 +2727,12 @@ def _recitation_payload(student, on_date=None):
 
 
 def _parse_recitation_post(request):
-    """يقرأ حقول التسميع من POST ويتحقق منها. يعيد (قيم النموذج، نص الخطأ)."""
+    """
+    يقرأ حقول التسميع من POST ويتحقق منها. يعيد (قيم النموذج، نص الخطأ).
+    طريقتان:
+      • pages: from_page/to_page (صفحة واحدة إن لم تُحدَّد النهاية).
+      • surah: surah + from_page/to_page من صفحات تلك السورة (آخر جزأين فقط).
+    """
     post = request.POST
     raw = (post.get('date') or '').strip()
     if raw:
@@ -2487,15 +2749,39 @@ def _parse_recitation_post(request):
             return int(post.get(name, ''))
         except (TypeError, ValueError):
             return None
-    from_surah, from_ayah = _int('from_surah'), _int('from_ayah')
-    to_surah, to_ayah = _int('to_surah'), _int('to_ayah')
-    if to_surah is None:
-        to_surah = from_surah
-    if None in (from_surah, from_ayah, to_surah, to_ayah):
-        return None, 'أكمل السورة وأرقام الآيات'
-    err = quran.validate_range(from_surah, from_ayah, to_surah, to_ayah)
+
+    mode = post.get('mode') or 'pages'
+    if mode not in ('pages', 'surah'):
+        mode = 'pages'
+
+    surah = None
+    if mode == 'surah':
+        surah = _int('surah')
+        if not surah or surah not in quran.AYAH_COUNT:
+            return None, 'اختر السورة'
+        if not quran.is_surah_mode_surah(surah):
+            return None, 'وضع «أسماء السور» لآخر جزأين فقط (الملك ← الناس)؛ استخدم الصفحات لهذه السورة'
+        first_pg, last_pg = quran.surah_pages(surah)
+
+    from_page, to_page = _int('from_page'), _int('to_page')
+    if to_page is None:
+        to_page = from_page
+    if not from_page:
+        return None, 'اختر صفحة التسميع'
+    if to_page < from_page:
+        from_page, to_page = to_page, from_page
+    if not (1 <= from_page <= quran.LAST_PAGE) or not (1 <= to_page <= quran.LAST_PAGE):
+        return None, f'رقم الصفحة يجب أن يكون بين 1 و{quran.LAST_PAGE}'
+    if mode == 'surah':
+        if not (first_pg <= from_page <= last_pg and first_pg <= to_page <= last_pg):
+            return None, f'صفحات سورة {quran.SURAH_NAME[surah]} هي {first_pg}–{last_pg}'
+
+    fs, fa = quran.page_start(from_page)
+    ts, ta = quran.page_end(to_page)
+    err = quran.validate_range(fs, fa, ts, ta)
     if err:
         return None, err
+
     kind = post.get('kind') or 'new'
     if kind not in dict(Recitation.KIND_CHOICES):
         return None, 'نوع التسميع غير صالح'
@@ -2503,15 +2789,20 @@ def _parse_recitation_post(request):
     if grade and grade not in dict(Recitation.GRADE_CHOICES):
         return None, 'التقدير غير صالح'
     return {
-        'date': d, 'kind': kind, 'grade': grade,
-        'from_surah': from_surah, 'from_ayah': from_ayah, 'to_surah': to_surah, 'to_ayah': to_ayah,
+        'date': d, 'kind': kind, 'grade': grade, 'mode': mode,
+        'from_page': from_page, 'to_page': to_page,
+        'surah': surah if mode == 'surah' else None,
+        'from_surah': fs, 'from_ayah': fa, 'to_surah': ts, 'to_ayah': ta,
         'notes': (post.get('notes') or '').strip()[:255],
     }, None
 
 
 @login_required
 def recitation_page(request):
-    """صفحة التسميع: اختر حلقة وتاريخاً، ثم سجّل تسميع كل طالب من الحلقة على حدة."""
+    """
+    «الدورات القرآنية»: الحضور والتسميع في صفحة واحدة — لكل طالب مربع حضور
+    (حاضر/تأخر/إذن/غائب) بجانبه زر «＋ تسميع» بالصفحات (وأسماء السور في آخر جزأين).
+    """
     from collections import defaultdict
     from django.db.models import Max
     circles = cache_utils.circles()
@@ -2521,16 +2812,20 @@ def recitation_page(request):
         selected_date = today
 
     circle = prev_circle = next_circle = None
+    circle_obj = None
     if circles:
         wanted = request.GET.get('circle')
         circle = next((c for c in circles if str(c['id']) == str(wanted)), None) or circles[0]
         idx = [c['id'] for c in circles].index(circle['id'])
         prev_circle = circles[idx - 1] if idx > 0 else None
         next_circle = circles[idx + 1] if idx < len(circles) - 1 else None
+        circle_obj = Circle.objects.select_related('teacher', 'substitute_teacher').get(pk=circle['id'])
 
-    students = list(Student.objects.filter(circle_id=circle['id']).order_by('name')) if circle else []
+    students = list(Student.objects.filter(circle_id=circle['id'], parked_at__isnull=True)
+                    .order_by('name')) if circle else []
     ids = [st.id for st in students]
     last_by, day_by = {}, defaultdict(list)
+    attendance_by = {}
     if ids:
         # آخر تسميع لكل طالب: أحدث تاريخ ثم أكبر معرّف في ذلك اليوم (استعلامان صغيران بدل جلب كل السجلات)
         latest = dict(Recitation.objects.filter(student_id__in=ids).order_by()
@@ -2540,26 +2835,60 @@ def recitation_page(request):
                 last_by[r.student_id] = r
         for r in Recitation.objects.filter(student_id__in=ids, date=selected_date).order_by('id'):
             day_by[r.student_id].append(r)
+        attendance_by = dict(Attendance.objects.filter(
+            student_id__in=ids, date=selected_date).values_list('student_id', 'status'))
 
     rows = []
     for st in students:
         last = last_by.get(st.id)
         rows.append({
             'student': st,
+            'status': attendance_by.get(st.id, ''),
             'last': last,
+            'last_page': (last.last_page if last else None),
+            'birth_date': st.birth_date,
             'last_days_ago': (today - last.date).days if last else None,
             'items': day_by.get(st.id, []),
         })
+
+    counts = {
+        'present': sum(1 for r in rows if r['status'] == 'present'),
+        'late': sum(1 for r in rows if r['status'] == 'late'),
+        'excused': sum(1 for r in rows if r['status'] == 'excused'),
+        'absent': sum(1 for r in rows if r['status'] == 'absent'),
+    }
+
+    # الأستاذ المسؤول في ذلك اليوم (البديل يوم الربط المؤقت فقط)
+    day_teacher = circle_obj.teacher_on(selected_date) if circle_obj else None
+    teacher_status = ''
+    if day_teacher:
+        ta = TeacherAttendance.objects.filter(teacher=day_teacher, circle_id=circle['id'], date=selected_date).first()
+        teacher_status = ta.status if ta else ''
 
     return render(request, 'halaqat/recitation.html', {
         'active_nav': 'recitation',
         'circles': circles, 'circle': circle, 'prev_circle': prev_circle, 'next_circle': next_circle,
         'rows': rows,
+        'counts': counts,
+        'teacher': day_teacher,
+        'teacher_is_substitute': circle_obj.is_substituted_on(selected_date) if circle_obj else False,
+        'teacher_status': teacher_status,
         'heard': sum(1 for r in rows if r['items']),
         'remaining': sum(1 for r in rows if not r['items']),
         'selected_date': selected_date, 'today': today,
         'surahs': quran.surahs_for_js(),
         'kinds': Recitation.KIND_CHOICES, 'grades': Recitation.GRADE_CHOICES,
+        'status_choices': Attendance.STATUS_CHOICES,
+        'circle_rows_json': [{'id': r['student'].id, 'name': r['student'].name,
+                              'last_page': r['last_page'],
+                              'birth': r['birth_date'].isoformat() if r['birth_date'] else None,
+                              'last_on': r['last'].date.isoformat() if r['last'] else None}
+                             for r in rows],
+        'last_page': quran.LAST_PAGE,
+        'surah_mode_first': quran.SURAH_MODE_FIRST,
+        'surah_choices': quran.surah_choices_for_js(),
+        'circle_json': {'id': circle['id'], 'name': circle['name'],
+                        'teacher': day_teacher.name if day_teacher else ''} if circle else None,
     })
 
 
@@ -2576,6 +2905,12 @@ def recitation_add(request, student_id):
     data, err = _parse_recitation_post(request)
     if err:
         return JsonResponse({'ok': False, 'error': err}, status=400)
+    # منع التكرار عند إعادة إرسال العمليات المحفوظة دون اتصال (client_uid يصنعه المتصفح)
+    uid = (request.POST.get('client_uid') or '').strip()[:60]
+    if uid and student.recitations.filter(notes__startswith='[uid:' + uid + ']').exists():
+        return JsonResponse(_recitation_payload(student, _parse_iso(request.POST.get('ctx_date'))))
+    if uid:
+        data['notes'] = ('[uid:' + uid + '] ' + data.get('notes', ''))[:255]
     Recitation.objects.create(student=student, circle=student.circle, **data)
     return JsonResponse(_recitation_payload(student, _parse_iso(request.POST.get('ctx_date'))))
 

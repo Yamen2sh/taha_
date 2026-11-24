@@ -58,7 +58,7 @@ _NAV_MAIN = [
     ('courses_list', 'courses', '🎓', 'الدورات'),
     ('absentees_list', 'absentees', '🚫', 'الغائبون'),
     ('sabr_page', 'sabr', '📝', 'السبر'),
-    ('recitation_page', 'recitation', '🎙', 'التسميع'),
+    ('recitation_page', 'recitation', '🎙', 'الدورات القرآنية'),
 ]
 _NAV_MORE = [
     ('teachers_list', 'teachers', '👨‍🏫', 'الأساتذة'),

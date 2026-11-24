@@ -17,16 +17,49 @@
 </div>
 
 <div class="dn-bar">
-  <input type="search" id="dn-find" placeholder="🔍 ابحث عن طالب…" autocomplete="off">
-  <button type="button" class="btn-secondary" id="dn-undo" disabled>↩ تراجع عن آخر نقل</button>
+  <input type="search" id="dn-find" placeholder="🔍 ابحث عن طالب أو أستاذ…" autocomplete="off">
+  <button type="button" class="btn-secondary" id="dn-undo" disabled>↩ تراجع</button>
+  <button type="button" class="btn-secondary" id="dn-add-toggle">＋ إضافة</button>
   <span class="dn-status" id="dn-status" data-default="{{ total_students }} طالب في {{ boards|length }} حلقة">{{ total_students }} طالب في {{ boards|length }} حلقة</span>
 </div>
-<div class="dn-hint">
-  بالماوس: اسحب البطاقة من أي مكان. باللمس: اسحب من المقبض <b>⠿</b>، أو اضغط على البطاقة ضغطة مطوّلة ثم اسحب.
-  أي نقل يمكن التراجع عنه (Ctrl+Z). سجلات الحضور السابقة للطالب تبقى كما هي في حلقته القديمة.
+
+{# إضافة سريعة: طالب / أستاذ / حلقة — بلا مغادرة الصفحة #}
+<div class="dn-addbar" id="dn-addbar" hidden>
+  <div class="dn-addform" data-kind="student">
+    <b>➕ طالب</b>
+    <input type="text" name="name" placeholder="اسم الطالب">
+    <input type="date" name="birth_date" title="تاريخ الميلاد (اختياري)">
+    <select name="circle_id">
+      <option value="park">الحاوية الفارغة (بلا حلقة)</option>
+      {% for b in boards %}<option value="{{ b.circle.id }}">{{ b.circle.name }}</option>{% endfor %}
+    </select>
+    <button type="button" class="dn-addbtn">إضافة طالب</button>
+  </div>
+  <div class="dn-addform" data-kind="teacher">
+    <b>➕ أستاذ</b>
+    <input type="text" name="name" placeholder="اسم الأستاذ">
+    <input type="text" name="phone" placeholder="الهاتف (اختياري)">
+    <button type="button" class="dn-addbtn">إضافة أستاذ</button>
+  </div>
+  <div class="dn-addform" data-kind="circle">
+    <b>➕ حلقة</b>
+    <input type="text" name="name" placeholder="اسم الحلقة">
+    <select name="teacher_id">
+      <option value="">بلا أستاذ</option>
+      {% for t in teachers %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}
+      {% for t in free_teachers %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}
+    </select>
+    <button type="button" class="dn-addbtn">إضافة حلقة</button>
+  </div>
 </div>
 
-<div class="dn-board" id="dn-board" data-move-url="{% url 'sort_students_move' %}">
+<div class="dn-hint">
+  بالماوس: اسحب البطاقة من أي مكان. باللمس: اسحب من المقبض <b>⠿</b>، أو اضغط على البطاقة ضغطة مطوّلة ثم اسحب.
+  الحاوية الفارغة أسفل اللوحة لوضع طلاب مؤقتاً (يُخفَون من الحضور والتسميع) — <b>لا تغادر الصفحة قبل إفراغها</b>.
+</div>
+
+<div class="dn-board" id="dn-board" data-move-url="{% url 'sort_students_move' %}" data-add-url="{% url 'sort_students_add' %}"
+     data-parked-count="{{ total_parked }}">
   {% for b in boards %}
   <section class="dn-col{% if b.students %} has-cards{% endif %}" data-circle="{{ b.circle.id }}" data-name="{{ b.circle.name }}">
     <header class="dn-head">
@@ -36,9 +69,21 @@
       </div>
       <span class="dn-count" data-count>{{ b.students|length }}</span>
     </header>
+    {% if b.circle.teacher %}
+    <div class="dn-teacher-card" data-teacher="{{ b.circle.teacher.id }}" data-name="{{ b.circle.teacher.name }}">
+      <span class="dn-tgrip" aria-hidden="true">⠿</span>
+      <span class="dn-tname">👨‍🏫 {{ b.circle.teacher.name }}</span>
+      <span class="dn-trole">أستاذ الحلقة</span>
+    </div>
+    {% endif %}
     <div class="dn-list" data-list>
       {% for s in b.students %}
-      <div class="dn-card" data-student="{{ s.id }}" data-name="{{ s.name }}"><span class="dn-grip" aria-hidden="true">⠿</span><span class="dn-name">{{ s.name }}</span></div>
+      <div class="dn-card" data-student="{{ s.id }}" data-name="{{ s.name }}">
+        <span class="dn-grip" aria-hidden="true">⠿</span>
+        <span class="dn-name">{{ s.name }}</span>
+        {% if s.last_page %}<span class="mini-tag page" title="آخر صفحة مسمّعة">ص {{ s.last_page }}</span>{% endif %}
+        {% if s.birth_year %}<span class="mini-tag birth" title="سنة الميلاد">{{ s.birth_year }}</span>{% endif %}
+      </div>
       {% endfor %}
       <div class="dn-empty">اسحب طلاباً إلى هنا</div>
     </div>
@@ -46,7 +91,42 @@
   {% empty %}
   <div class="empty-state">لا توجد حلقات بعد.</div>
   {% endfor %}
+
+  {# ───────── الحاوية الفارغة الكبيرة: طلاب بلا حلقة (مؤقتاً) + كوادر بلا حلقات ───────── #}
+  <section class="dn-col dn-park{% if parked %} has-cards{% endif %}" data-circle="park" data-name="الحاوية الفارغة">
+    <header class="dn-head">
+      <div>
+        <div class="dn-title">🗃 الحاوية الفارغة</div>
+        <div class="dn-teacher">طلاب وكوادر بلا حلقة — ضعهم هنا مؤقتاً ثم وزّعهم</div>
+      </div>
+      <span class="dn-count" data-count>{{ parked|length }}</span>
+    </header>
+    <div class="dn-park-teachers" data-park-teachers>
+      {% for t in free_teachers %}
+      <div class="dn-teacher-card free" data-teacher="{{ t.id }}" data-name="{{ t.name }}">
+        <span class="dn-tgrip" aria-hidden="true">⠿</span>
+        <span class="dn-tname">👨‍🏫 {{ t.name }}</span>
+        <span class="dn-trole">بلا حلقة</span>
+      </div>
+      {% endfor %}
+      <div class="dn-tempty" {% if free_teachers %}hidden{% endif %}>لا كوادر بلا حلقات</div>
+    </div>
+    <div class="dn-list dn-park-list" data-list>
+      {% for s in parked %}
+      <div class="dn-card dn-card-park" data-student="{{ s.id }}" data-name="{{ s.name }}">
+        <span class="dn-grip" aria-hidden="true">⠿</span>
+        <span class="dn-name">{{ s.name }}</span>
+        {% if s.last_page %}<span class="mini-tag page" title="آخر صفحة مسمّعة">ص {{ s.last_page }}</span>{% endif %}
+        {% if s.birth_year %}<span class="mini-tag birth" title="سنة الميلاد">{{ s.birth_year }}</span>{% endif %}
+      </div>
+      {% endfor %}
+      <div class="dn-empty">ضع هنا الطلاب مؤقتاً</div>
+    </div>
+    <div class="dn-park-warn{% if not parked %} ok{% endif %}" id="dn-park-warn">
+      {% if parked %}⚠️ الحاوية غير فارغة — وزّع الطلاب على الحلقات قبل مغادرة الصفحة{% else %}✅ الحاوية فارغة{% endif %}
+    </div>
+  </section>
 </div>
 
-<script src="{% static 'halaqat/js/sort_students.js' %}?v=1"></script>
+<script src="{% static 'halaqat/js/sort_students.js' %}?v=2"></script>
 {% endblock %}
