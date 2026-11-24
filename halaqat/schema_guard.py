@@ -22,6 +22,19 @@ from django.db import connection
 logger = logging.getLogger(__name__)
 
 
+def _run_original_migrate(*args, **options):
+    """
+    ينفّذ أمر ``migrate`` الأصلي في Django متجاوزاً نسختنا الذكية
+    (halaqat/management/commands/migrate.py) لتجنّب الاستدعاء الذاتي.
+    """
+    from django.core.management import call_command
+    from django.core.management.commands import migrate as django_migrate
+
+    options.setdefault('interactive', False)
+    options.setdefault('verbosity', 0)
+    return call_command(django_migrate.Command(), *args, **options)
+
+
 def _migration_plan():
     """يعيد قائمة الترحيلات غير المطبّقة لكل التطبيقات (تعتمد فقط على جدول الترحيلات)."""
     from django.db.migrations.executor import MigrationExecutor
@@ -42,72 +55,171 @@ def pending_migrations():
     return [f'{m.app_label}.{m.name}' for m, backwards in plan if not backwards]
 
 
-def _column_exists(table, column):
-    """هل العمود موجود في الجدول؟"""
+def _table_columns(table):
+    """
+    أسماء أعمدة جدول (بلا أي استعلام على الجدول نفسه، فلا يُفسد أي معاملة).
+    يعيد set() إن لم يوجد الجدول.
+    """
     try:
         with connection.cursor() as cur:
             if connection.vendor == 'postgresql':
                 cur.execute('SELECT to_regclass(%s) IS NOT NULL', [connection.ops.quote_name(table)])
                 if not cur.fetchone()[0]:
-                    return False
-                cur.execute("SELECT 1 FROM information_schema.columns "
-                            "WHERE table_name = %s AND column_name = %s LIMIT 1", [table, column])
-                return cur.fetchone() is not None
-            cur.execute('SELECT ' + connection.ops.quote_name(column) + ' FROM '
-                        + connection.ops.quote_name(table) + ' LIMIT 1')
-        return True
+                    return set()
+                cur.execute("SELECT column_name FROM information_schema.columns "
+                            "WHERE table_name = %s", [table])
+                return {r[0] for r in cur.fetchall()}
+            cur.execute(f'PRAGMA table_info("{table}")')
+            return {r[1] for r in cur.fetchall()}
     except Exception:                              # noqa: BLE001
-        return False
+        return set()
 
 
-def _op_target(op, app_label):
+def _column_exists(table, column):
+    """هل العمود موجود فعلاً في الجدول؟"""
+    return column in _table_columns(table)
+
+
+def _op_target(op, app_label, state=None):
     """
-    يعيد (نوع الهدف، اسم الجدول، اسم العمود|None) للعمليات التي يمكن التحقق منها،
+    يعيد (نوع الهدف، اسم الجدول، اسم العمود|None) للعمليات القابلة للتحقق،
     أو None للعمليات التي لا يمكن الحكم عليها (تعديل/حذف/تشغيل كود).
+
+    ملاحظة مهمة: نأخذ اسم الجدول والعمود من **حالة الترحيل نفسها** (state)
+    لا من النموذج الحالي — وإلا فحصنا عموداً لم يُنشأ بعد.
     """
     from django.db.migrations import operations as ops
 
     if isinstance(op, ops.CreateModel):
-        name = op.name
+        model_state = state.models.get((app_label, op.name.lower())) if state else None
         table = (op.options or {}).get('db_table')
+        if not table and model_state is not None:
+            table = model_state.options.get('db_table')
         if not table:
             try:
-                table = apps.get_model(app_label, name)._meta.db_table
+                table = apps.get_model(app_label, op.name)._meta.db_table
             except LookupError:
-                table = f'{app_label}_{name.lower()}'
+                table = f'{app_label}_{op.name.lower()}'
         return ('table', table, None)
 
     if isinstance(op, ops.AddField):
-        try:
-            model = apps.get_model(app_label, op.model_name)
-            table = model._meta.db_table
-        except LookupError:
-            return None
+        key = (app_label, op.model_name.lower())
+        table = column = None
+        if state is not None:
+            model_state = state.models.get(key)
+            if model_state is not None:
+                table = model_state.options.get('db_table') or f'{app_label}_{op.model_name.lower()}'
+        if not table:
+            try:
+                table = apps.get_model(app_label, op.model_name)._meta.db_table
+            except LookupError:
+                table = f'{app_label}_{op.model_name.lower()}'
         field = op.field
         try:
             field.set_attributes_from_name(op.name)
         except Exception:                          # noqa: BLE001
             pass
-        return ('column', table, getattr(field, 'column', None) or op.name)
+        column = getattr(field, 'column', None) or op.name
+        return ('column', table, column)
 
     return None
 
 
+def _pre_state(migration):
+    """
+    حالة المخطط **قبل** هذا الترحيل، مبنية من **كل** ترحيلات المصدر (القرص)
+    بالترتيب — لا تعتمد على ما هو مطبَّق، فتعمل حتى على قاعدة فارغة.
+    تُبنى مرة واحدة وتُخزَّن في الذاكرة.
+    """
+    from django.db.migrations.loader import MigrationLoader
+    from django.db.migrations.state import ProjectState
+
+    global _PRE_STATE_CACHE
+    try:
+        cached = _PRE_STATE_CACHE
+    except NameError:
+        cached = None
+    if cached is None:
+        cached = {}
+        try:
+            loader = MigrationLoader(None, ignore_no_migrations=True)
+            state = ProjectState()
+            order = []
+            for key in _topological_migrations(loader):
+                order.append(loader.disk_migrations[key])
+            for mig in order:
+                try:
+                    state = state.clone()
+                    for op in mig.operations:
+                        op.state_forwards(mig.app_label, state)
+                except Exception:                  # noqa: BLE001
+                    pass
+                cached[(mig.app_label, mig.name)] = state.clone()
+        except Exception:                          # noqa: BLE001
+            cached = {}
+        _PRE_STATE_CACHE = cached
+
+    key = (migration.app_label, migration.name)
+    if key in cached:
+        return cached[key]
+    return ProjectState()
+
+
+def _topological_migrations(loader):
+    """
+    ترتيب الترحيلات من الأقدم إلى الأحدث حسب تبعيات الرسم.
+    (مفاتيح node_map كائنات Node، لذلك نستخرج .key منها بعناية.)
+    """
+    ordered, seen = [], set()
+
+    def key_of(node):
+        return getattr(node, 'key', node)
+
+    def visit(node, stack=()):
+        key = key_of(node)
+        if key in seen or key in stack:
+            return
+        for parent in getattr(node, 'parents', ()):
+            visit(parent, stack + (key,))
+        seen.add(key)
+        ordered.append(key)
+
+    for key in sorted(loader.disk_migrations):
+        node = loader.graph.node_map.get(key)
+        if node is not None:
+            visit(node)
+        elif key not in seen:
+            seen.add(key)
+            ordered.append(key)
+    return ordered
+
+
 def _migration_already_satisfied(migration):
     """
-    صحيح إن كانت **كل** عمليات الترحيل إنشاءات وجميع أهدافها موجودة بالفعل
-    (أي أن الترحيل نُفِّذ فعلياً لكن لم يُسجَّل في django_migrations).
+    صحيح **فقط** إن كانت كل عمليات الترحيل إنشاءات (جدول/عمود) وجميع أهدافها
+    موجودة بالفعل — أي أن الترحيل نُفِّذ فعلاً لكن لم يُسجَّل في django_migrations.
+
+    نتتبّع حالة المخطط خطوة بخطوة لمعرفة أسماء الأعمدة الحقيقية.
+    أي عملية لا يمكن التحقق منها (تعديل/حذف/بيانات) → False (أأمن: نُنفّذ ولا نتجاوز).
     """
     from django.db.migrations import operations as ops
 
+    state = _pre_state(migration)
     targets = []
     for op in migration.operations:
-        target = _op_target(op, migration.app_label)
+        target = _op_target(op, migration.app_label, state)
         if target is None:
             if isinstance(op, (ops.AlterModelOptions, ops.AlterModelTable)):
-                continue                           # لا تُنشئ شيئاً — لا تمنع التجاوز
-            return False                           # عملية لا يمكن التحقق منها
-        targets.append(target)
+                pass                               # لا تُنشئ شيئاً — لا تمنع التجاوز
+            else:
+                return False                       # عملية لا يمكن التحقق منها
+        else:
+            targets.append(target)
+        try:
+            state = state.clone()
+            op.state_forwards(migration.app_label, state)
+        except Exception:                          # noqa: BLE001
+            return False
 
     if not targets:
         return False
@@ -159,7 +271,6 @@ def apply_migrations():
       • وإن فشل التنفيذ بخطأ «موجود بالفعل» يُسجَّل الترحيل ويُكمَل إلى ما بعده.
     على PostgreSQL يستخدم قفلاً استشارياً لمنع تشغيل نسختين في وقت واحد.
     """
-    from django.core.management import call_command
     from django.db.migrations.executor import MigrationExecutor
 
     applied, skipped = [], []
@@ -185,18 +296,25 @@ def apply_migrations():
                     skipped.append(f'{migration.app_label}.{migration.name}')
                     continue
                 try:
-                    call_command('migrate', migration.app_label, migration.name,
-                                 interactive=False, verbosity=0)
+                    _run_original_migrate(migration.app_label, migration.name)
                     applied.append(f'{migration.app_label}.{migration.name}')
                 except Exception as exc:                   # noqa: BLE001
                     message = str(exc).lower()
-                    if any(h in message for h in _DUPLICATE_HINTS):
-                        # العنصر موجود فعلاً — نُسجّل الترحيل ونُكمل
-                        logger.warning('تجاوز %s.%s: %s', migration.app_label, migration.name, exc)
+                    try:
                         connection.rollback()
-                        _mark_applied(migration)
-                        skipped.append(f'{migration.app_label}.{migration.name}')
-                        continue
+                    except Exception:                  # noqa: BLE001
+                        pass
+                    if any(h in message for h in _DUPLICATE_HINTS):
+                        # خطأ «موجود بالفعل» — لكن لا نثق به عمياناً:
+                        # نتحقق أن كل عناصر الترحيل موجودة فعلاً قبل تسجيله كمطبَّق.
+                        if _migration_already_satisfied(migration):
+                            logger.warning('تجاوز %s.%s (عناصره موجودة فعلاً): %s',
+                                           migration.app_label, migration.name, exc)
+                            _mark_applied(migration)
+                            skipped.append(f'{migration.app_label}.{migration.name}')
+                            continue
+                        logger.error('خطأ «موجود بالفعل» لكن عناصر %s.%s غير مكتملة — يُترك للتنفيذ',
+                                     migration.app_label, migration.name)
                     raise
         finally:
             if locked:
@@ -210,27 +328,11 @@ def apply_migrations():
 
 
 def _table_exists(table):
-    """
-    هل الجدول موجود؟ نستخدم استعلاماً مستقلاً عن الجداول الوصفية إن أمكن،
-    وإلا استعلاماً محاطاً بـ savepoint حتى لا يُفسد معاملة فاشلة الاتصال.
-    """
+    """هل الجدول موجود؟ استعلام وصفي فقط — لا نقرأ من الجدول (قد يكون تالفاً/بلا أعمدة)."""
     try:
-        with connection.cursor() as cur:
-            if connection.vendor == 'postgresql':
-                # استعلام وصفي لا يفشل أبداً ولا يُفسد المعاملة
-                cur.execute('SELECT to_regclass(%s) IS NOT NULL', [connection.ops.quote_name(table)])
-                return bool(cur.fetchone()[0])
-            cur.execute('SELECT 1 FROM ' + connection.ops.quote_name(table) + ' LIMIT 1')
-        return True
+        return bool(_table_columns(table))
     except Exception:                              # noqa: BLE001
         return False
-    finally:
-        # على PostgreSQL قد يُترك الاتصال في حالة «معاملة فاشلة» → نُعيده ليعمل
-        if connection.vendor == 'postgresql':
-            try:
-                connection.rollback()
-            except Exception:                      # noqa: BLE001
-                pass
 
 
 def schema_status():
@@ -255,6 +357,93 @@ def schema_status():
     }
 
 
+def _recorded_migrations():
+    """أسماء الترحيلات المسجَّلة فعلاً في django_migrations."""
+    try:
+        with connection.cursor() as cur:
+            cur.execute('SELECT app, name FROM django_migrations')
+            return {(app, name) for app, name in cur.fetchall()}
+    except Exception:                              # noqa: BLE001 — الجدول غير موجود
+        return set()
+
+
+def repair_history():
+    """
+    يُصلح «تاريخاً غير متّسق» في django_migrations: ترحيل غير مسجَّل لكن ترحيلاً
+    لاحقاً يعتمد عليه مسجَّل (يسبّب ``InconsistentMigrationHistory`` فيتعطّل **كل**
+    أمر ``migrate``). إن كانت عناصره موجودة فعلاً في القاعدة → يُسجَّل كمطبَّق.
+
+    يُعيد قائمة الترحيلات التي سُجِّلت بهذه الطريقة.
+    """
+    from django.db.migrations.loader import MigrationLoader
+
+    recorded = _recorded_migrations()
+    if not recorded:
+        return []
+    try:
+        loader = MigrationLoader(None, ignore_no_migrations=True)
+    except Exception:                              # noqa: BLE001
+        return []
+
+    fixed = []
+    for key in _topological_migrations(loader):
+        if key in recorded:
+            continue
+        node = loader.graph.node_map.get(key)
+        if node is None:
+            continue
+        # هل يعتمد عليه ترحيل مسجَّل؟ (أي أنه في المنتصف → تاريخ متّسق مستحيل)
+        has_recorded_child = any(key_of(child) in recorded
+                                 for child in getattr(node, 'children', ())
+                                 for key_of in (lambda n: getattr(n, 'key', n),))
+        if not has_recorded_child:
+            continue
+        migration = loader.disk_migrations.get(key)
+        if migration is None or not _migration_already_satisfied(migration):
+            continue
+        try:
+            _mark_applied(migration)
+            recorded.add(key)
+            fixed.append(f'{migration.app_label}.{migration.name}')
+            logger.warning('إصلاح تاريخ الترحيلات: سُجِّل %s.%s كمطبَّق (عناصره موجودة)',
+                           migration.app_label, migration.name)
+        except Exception as exc:                   # noqa: BLE001
+            logger.error('تعذّر إصلاح تاريخ الترحيلات لـ %s.%s: %s', key[0], key[1], exc)
+    return fixed
+
+
+def ensure_cache_table():
+    """
+    يتأكد من وجود جدول الكاش ``django_cache``.
+    كاش قاعدة البيانات (DatabaseCache) يحتاج ``createcachetable``؛ وإن غاب الجدول
+    تفشل **كل** صفحة تستخدم الكاش بـ 503 رغم سلامة المخطط والترحيلات.
+    """
+    from django.core.cache import cache, caches
+
+    try:
+        if caches['default'].__class__.__name__ != 'DatabaseCache':
+            return False
+    except Exception:                              # noqa: BLE001
+        return False
+
+    table = connection.ops.quote_name(caches['default']._table)
+    if _table_exists(caches['default']._table):
+        try:                                       # الجدول موجود — تأكد أنه سليم
+            cache.get('__schema_probe__')
+            return False
+        except Exception:                          # noqa: BLE001 — جدول تالف
+            logger.warning('جدول الكاش تالف — يُعاد إنشاؤه')
+    try:
+        with connection.cursor() as cur:
+            cur.execute(f'DROP TABLE IF EXISTS {table}')
+    except Exception:                              # noqa: BLE001
+        pass
+    from django.core.management import call_command
+    call_command('createcachetable', verbosity=0)
+    logger.info('أُنشئ جدول الكاش %s', table)
+    return True
+
+
 def ensure_schema_async():
     """
     يشغّل الترحيلات في خيط خلفي عند الإقلاع حتى لا يتأخّر تشغيل الخادم.
@@ -266,6 +455,10 @@ def ensure_schema_async():
         return None
 
     def work():
+        try:
+            ensure_cache_table()
+        except Exception as exc:                  # noqa: BLE001
+            logger.error('تعذّر إنشاء جدول الكاش: %s', exc)
         try:
             apply_migrations()
         except Exception as exc:                  # noqa: BLE001 — لا نُسقِط التطبيق أبداً
