@@ -1812,6 +1812,11 @@ def developer_run_migrations(request):
     آمن: يستخدم قفل PostgreSQL الاستشاري، ويُرجع ما طُبِّق فعلياً.
     """
     try:
+        schema_guard.repair_history()
+        try:
+            schema_guard.ensure_cache_table()
+        except Exception:                          # noqa: BLE001
+            pass
         applied = schema_guard.apply_migrations()
     except Exception as exc:                       # noqa: BLE001 — نُبلّغ بدل 500
         detail = str(exc)
