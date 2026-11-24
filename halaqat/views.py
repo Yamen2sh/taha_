@@ -2001,6 +2001,27 @@ def developer_ai_save(request):
 
 @login_required
 @require_POST
+def developer_ai_models(request):
+    """
+    يجلب النماذج المتاحة فعلاً لمفتاحك ويعرضها — لتشخيص خطأ 404
+    («عنوان الـ API أو اسم النموذج غير صحيح») واختيار اسم نموذج صحيح.
+    """
+    cfg = AISettings.load()
+    key = cfg.effective_key()
+    if not key:
+        return JsonResponse({'ok': False, 'error': 'لم يُضبط مفتاح Gemini. أضف GEMINI_API_KEY في متغيّرات البيئة.'}, status=200)
+    names, err = ai_query.available_models(cfg.effective_base_url(), key)
+    if err and not names:
+        return JsonResponse({'ok': False, 'error': f'تعذّر جلب النماذج: {err}'}, status=200)
+    current = cfg.effective_model()
+    return JsonResponse({'ok': True, 'models': names, 'current': current,
+                         'current_available': current in names,
+                         'endpoint': ai_query._endpoint(cfg.effective_base_url(), ai_query.provider_kind(cfg.effective_base_url()), current),
+                         'base_url': cfg.effective_base_url()})
+
+
+@login_required
+@require_POST
 def developer_ai_test(request):
     """اختبار سريع للاتصال: يرسل سؤالاً بسيطاً ويتحقق من إرجاع مواصفة صالحة."""
     cfg = AISettings.load()

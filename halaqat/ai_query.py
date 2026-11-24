@@ -608,30 +608,96 @@ _WEEKDAYS = ['الاثنين', 'الثلاثاء', 'الأربعاء', 'الخم
 
 
 
+GEMINI_API_ROOT = 'https://generativelanguage.googleapis.com'
+
+
 def provider_kind(base_url):
     """
     يحدّد شكل الطلب من عنوان الـ API:
-      • anthropic  → https://api.anthropic.com/v1
-      • gemini     → https://generativelanguage.googleapis.com  (Google AI Studio / أي وكيل Google)
+      • anthropic  → https://api.anthropic.com
+      • gemini     → https://generativelanguage.googleapis.com (Google AI Studio)
       • openai     → أي وكيل متوافق (OpenAI، OpenRouter، Groq، Together، DeepSeek، vLLM، Ollama…)
+
+    ملاحظة: نفحص المسار أيضاً لأن بعض الوكلاء يمرّرون Google عبر مسار يحتوي googleapis.
     """
-    url = (base_url or '').lower()
+    url = (base_url or '').lower().strip()
+    if not url:
+        return 'gemini'                                   # الافتراضي في هذا المشروع
     if 'anthropic.com' in url:
         return 'anthropic'
-    if 'generativelanguage.googleapis.com' in url or 'googleapis.com' in url:
+    if ('generativelanguage.googleapis.com' in url or 'googleapis.com' in url
+            or '/v1beta/models' in url or '/v1/models' in url):
         return 'gemini'
     return 'openai'
 
 
-def _endpoint(base_url, kind):
-    base = (base_url or '').rstrip('/')
+VERSION_SEGMENT = ('v1beta', 'v1alpha', 'v1')
+
+
+def clean_base_url(base_url, kind=None):
+    """
+    يُنظّف عنوان الـ API من الأجزاء التي يضيفها المستخدم عادةً بالخطأ:
+      • المسار الكامل لنقطة النهاية: /models/gemini-2.5-flash:generateContent
+      • شرطة مائلة أخيرة متكرّرة أو مسافات
+      • «/models» في النهاية
+    يعيد عنواناً أساسياً صحيحاً (مثل https://generativelanguage.googleapis.com/v1beta).
+    """
+    url = (base_url or '').strip()
+    if not url:
+        return GEMINI_API_ROOT + '/v1beta' if (kind or 'gemini') == 'gemini' else ''
+    # إن نُسخ العنوان الكامل من التوثيق: نقتطع عند /models
+    low = url.lower()
+    marker = low.find('/models/')
+    if marker != -1:
+        url = url[:marker]
+    elif low.endswith('/models'):
+        url = url[: -len('/models')]
+    # إزالة :generateContent أو ما شابه من النهاية
+    if ':' in url.split('/')[-1]:
+        url = url.rsplit('/', 1)[0]
+    return url.rstrip('/')
+
+
+def _endpoint(base_url, kind, model=None):
+    """يبني عنوان نقطة النهاية النهائي بحسب نوع المزوّد."""
+    base = clean_base_url(base_url, kind)
     if kind == 'anthropic':
-        return base + ('/messages' if base.endswith('/v1') else '/v1/messages')
+        return base + ('/messages' if base.rstrip('/').endswith(VERSION_SEGMENT) else '/v1/messages')
     if kind == 'gemini':
-        # https://generativelanguage.googleapis.com/v1beta/models/<model>:generateContent
-        return base + '/models/{model}:generateContent'
-    # OpenAI-compatible: يقبل https://host/v1 أو https://host كاملاً
-    return base + ('/chat/completions' if base.endswith('/v1') else '/v1/chat/completions')
+        if not base:
+            base = GEMINI_API_ROOT + '/v1beta'
+        # نتأكد من وجود إصدار في المسار
+        if not any(base.rstrip('/').endswith(seg) for seg in VERSION_SEGMENT):
+            base = base.rstrip('/') + '/v1beta'
+        return f'{base.rstrip("/")}/models/{(model or GEMINI_DEFAULT_MODEL).strip()}:generateContent'
+    # OpenAI-compatible
+    return base + ('/chat/completions' if base.rstrip('/').endswith(VERSION_SEGMENT) else '/v1/chat/completions')
+
+
+def _models_url(base_url):
+    """عنوان قائمة النماذج المتاحة للمفتاح (لتشخيص خطأ 404)."""
+    kind = provider_kind(base_url)
+    base = clean_base_url(base_url, kind)
+    if kind == 'gemini':
+        if not any(base.rstrip('/').endswith(seg) for seg in VERSION_SEGMENT):
+            base = base.rstrip('/') + '/v1beta'
+        return base.rstrip('/') + '/models'
+    if kind == 'anthropic':
+        return base.rstrip('/') + ('/models' if base.endswith('/v1') else '/v1/models')
+    return base.rstrip('/') + ('/models' if base.endswith('/v1') else '/v1/models')
+
+
+def _clean_model(model):
+    """
+    يُنظّف اسم النموذج: يقبل «models/gemini-2.5-flash» أو «gemini-2.5-flash:generateContent»
+    أو نصّاً فيه مسافات، ويعيد الاسم الصافي.
+    """
+    name = (model or '').strip()
+    if name.startswith('models/'):
+        name = name[len('models/'):]
+    if ':' in name:
+        name = name.split(':', 1)[0]
+    return name.strip()
 
 
 def _gemini_schema(schema):
@@ -775,19 +841,38 @@ def ask_llm(question, today, circle_names, api_key, model, http=None, timeout=30
         import requests as http
 
     kind = provider_kind(base_url)
-    url = _endpoint(base_url, kind)
+    model = _clean_model(model) or GEMINI_DEFAULT_MODEL
+    url = _endpoint(base_url, kind, model)
     headers = {'content-type': 'application/json'}
     if kind == 'anthropic':
         headers.update({'x-api-key': api_key, 'anthropic-version': '2023-06-01'})
     elif kind == 'gemini':
         headers['x-goog-api-key'] = api_key           # مفتاح Google AI Studio
-        url = url.replace('{model}', model or GEMINI_DEFAULT_MODEL)
     else:
         headers['authorization'] = f'Bearer {api_key}'
 
     body = build_request_body(question, today, circle_names, model, kind=kind, prompt=prompt)
+    resp = None
+    tried = [model]
     try:
         resp = http.post(url, timeout=timeout, headers=headers, json=body)
+        # Gemini: إن كان اسم النموذج غير متاح (404) نجرّب أسماء مستقرة تلقائياً
+        if kind == 'gemini' and getattr(resp, 'status_code', 0) == 404:
+            from django.conf import settings as _s
+            explicit = bool((_s.AI_MODEL or '').strip() and model != GEMINI_DEFAULT_MODEL)
+            candidates = [GEMINI_DEFAULT_MODEL, 'gemini-2.0-flash', 'gemini-flash-latest',
+                          'gemini-1.5-flash'] if not explicit else [GEMINI_DEFAULT_MODEL]
+            for alt in candidates:
+                if not alt or alt in tried:
+                    continue
+                tried.append(alt)
+                alt_url = _endpoint(base_url, kind, alt)
+                alt_body = dict(body, model=alt)
+                logger.warning('النموذج %s غير متاح — تجربة %s', model, alt)
+                resp = http.post(alt_url, timeout=timeout, headers=headers, json=alt_body)
+                if getattr(resp, 'status_code', 0) != 404:
+                    url, body, model = alt_url, alt_body, alt
+                    break
     except Exception as e:                       # noqa: BLE001 — مهلة/شبكة
         logger.warning('تعذّر الاتصال بخدمة الذكاء الاصطناعي (%s): %s', url, e)
         raise AssistantError('تعذّر الاتصال بخدمة الذكاء الاصطناعي الآن. تحقّق من عنوان الـ API أو حاول بعد قليل.', 'network')
@@ -798,7 +883,10 @@ def ask_llm(question, today, circle_names, api_key, model, http=None, timeout=30
                                  'من aistudio.google.com/apikey وأن الـ Generative Language API مفعّل.', 'auth')
         raise AssistantError('مفتاح الذكاء الاصطناعي غير صالح أو منتهٍ. راجع متغيّرات البيئة على الخادم.', 'auth')
     if status == 404:
-        raise AssistantError('عنوان الـ API أو اسم النموذج غير صحيح (404). راجع الإعدادات.', 'api')
+        msg = _not_found_message(kind, base_url, model)
+        if len(tried) > 1:
+            msg += ' (جُرِّبت أيضاً: ' + '، '.join(tried[1:]) + ')'
+        raise AssistantError(msg, 'not_found')
     if status == 429:
         raise AssistantError('الخدمة مشغولة حالياً (تجاوز حدّ الطلبات). جرّب بعد دقيقة.', 'rate')
     if status >= 400:
@@ -825,6 +913,73 @@ def ask_llm(question, today, circle_names, api_key, model, http=None, timeout=30
     if isinstance(spec, dict):
         return spec
     raise AssistantError('لم أتمكن من تحويل السؤال إلى استعلام. أعد صياغته أو استخدم «تعديل التفسير».', 'parse')
+
+
+def available_models(base_url, api_key, http=None, timeout=15):
+    """
+    يجلب أسماء النماذج المتاحة لهذا المفتاح (للتشخيص وللاختيار من صفحة المطور).
+    يعيد (أسماء, رسالة_خطأ|None).
+    """
+    if http is None:
+        import requests as http
+    kind = provider_kind(base_url)
+    url = _models_url(base_url)
+    headers = {'content-type': 'application/json'}
+    if kind == 'gemini':
+        headers['x-goog-api-key'] = api_key
+    elif kind == 'anthropic':
+        headers.update({'x-api-key': api_key, 'anthropic-version': '2023-06-01'})
+    else:
+        headers['authorization'] = f'Bearer {api_key}'
+    try:
+        resp = http.get(url, headers=headers, timeout=timeout)
+    except Exception as exc:                        # noqa: BLE001
+        return [], f'تعذّر الاتصال: {exc}'
+    if getattr(resp, 'status_code', 0) >= 400:
+        detail = ''
+        try:
+            detail = str((resp.json().get('error') or {}).get('message') or '')[:160]
+        except Exception:                           # noqa: BLE001
+            detail = ''
+        return [], f'HTTP {resp.status_code}{(" — " + detail) if detail else ""}'
+    try:
+        data = resp.json()
+    except ValueError:
+        return [], 'استجابة غير مفهومة'
+
+    names = []
+    if kind == 'gemini':
+        for item in data.get('models') or []:
+            methods = item.get('supportedGenerationMethods') or item.get('supportedActions') or []
+            if methods and 'generateContent' not in methods:
+                continue
+            name = (item.get('name') or '').split('/')[-1]
+            if name:
+                names.append(name)
+    else:
+        for item in data.get('data') or data.get('models') or []:
+            name = item.get('id') or item.get('name') or ''
+            if name:
+                names.append(name.split('/')[-1])
+    return sorted(set(names)), None
+
+
+def _not_found_message(kind, base_url, model):
+    """
+    رسالة 404 واضحة **بلا أي طلب شبكة إضافي** (حتى لا يتأخّر الرد أو يتعلّق):
+    تعرض العنوان المستخدم فعلاً وأشهر الأسباب، وتُحيل إلى زر «📋 النماذج المتاحة».
+    """
+    try:
+        url = _endpoint(base_url, kind, model)
+    except Exception:                               # noqa: BLE001
+        url = base_url
+    if kind == 'gemini':
+        return (f'اسم النموذج أو العنوان غير صحيح (404). العنوان المستخدم: {url} — '
+                f'تأكّد أن AI_MODEL اسم نموذج متاح لمفتاحك مثل gemini-2.5-flash (بدون كلمة models/ أو :generateContent)، '
+                f'وأن AI_BASE_URL هو https://generativelanguage.googleapis.com/v1beta — '
+                f'واضغط «📋 النماذج المتاحة» في صفحة المطور لعرض أسماء نماذج مفتاحك.')
+    return (f'عنوان الـ API أو اسم النموذج غير صحيح (404). العنوان المستخدم: {url} — '
+            f'راجع AI_MODEL وAI_BASE_URL، واضغط «📋 النماذج المتاحة» لعرض الأسماء المتاحة.')
 
 
 def ask_llm_with_settings(question, today, circle_names):
