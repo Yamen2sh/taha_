@@ -1137,3 +1137,60 @@ label.shake{animation:shakeX .3s 2}
 .schema-alert{background:#fdf3f2;border:1px solid #f0d2ce;border-right:4px solid #c0392b;color:#a03225;
   border-radius:10px;padding:10px 13px;font-size:12.5px;line-height:1.9;margin-bottom:12px;font-weight:600}
 .schema-alert a{color:#8e2a1f;font-weight:800;text-decoration:underline;white-space:nowrap}
+
+/* ======================================================
+   «الدورات القرآنية»: إصلاح صفّ الطالب (كان يترك فراغاً كبيراً)
+   ====================================================== */
+.rc-row{gap:14px 18px}
+.rc-main{flex:1 1 260px;min-width:0;align-items:flex-start}
+.rc-info{flex:1;min-width:0}
+.rc-nameline{gap:6px}
+.rc-name{font-size:14.5px}
+.rc-last,.rc-day{max-width:100%}
+
+/* الجهة اليمنى: الأسابيع فوق + الحضور والأزرار تحت (متراصّة) */
+.rc-side{display:flex;flex-direction:column;align-items:flex-end;gap:8px;flex:0 0 auto;max-width:100%}
+.rc-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.rc-btns{display:flex;align-items:center;gap:6px;margin-top:0}
+.rc-row .tristate.compact{width:auto;flex:0 0 auto}
+.rc-row .tristate.compact label{padding:6px 11px;font-size:11.5px;min-width:44px}
+.rc-row .rc-add{padding:7px 13px}
+.rc-stats{border:none;background:var(--bg-alt);color:var(--primary-dark);border-radius:9px;
+  padding:8px 10px;font-size:13px;cursor:pointer;font-family:inherit;font-weight:700}
+.rc-stats:hover{background:var(--accent-light)}
+
+/* مربّعات الحضور لآخر 4 أسابيع (تُستخدم هنا وفي صفحات الحلقة/الدورة) */
+.rc-side .hist-weeks{margin-top:0;justify-content:flex-end;gap:6px}
+.rc-side .hist-week{padding:3px;gap:3px;border-radius:9px}
+.hist-weeks .hc{width:22px;height:22px;font-size:10px;border-radius:6px;font-weight:700}
+.hist-rate{font-size:11px;color:var(--primary-deep);background:var(--bg-alt);border-radius:999px;padding:1px 8px}
+
+@media (max-width:700px){
+  .rc-row{gap:10px}
+  .rc-main{flex:1 1 100%}
+  .rc-side{align-items:stretch;width:100%;flex:1 1 100%}
+  .rc-actions{justify-content:space-between;width:100%}
+  .rc-side .hist-weeks{justify-content:flex-start}
+}
+
+/* ======================================================
+   شريط التاريخ في «الدورات القرآنية» — كان حقل التاريخ يتمدد ويعطي فراغاً كبيراً
+   ====================================================== */
+.rc-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+.rc-dateform{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
+.rc-dateform label{margin:0;white-space:nowrap}
+.rc-dateform input[type="date"]{
+  /* لا يتمدّد لملء الصف: عرض طبيعي فقط */
+  flex:0 0 auto;width:auto;min-width:148px;max-width:190px;
+  padding:9px 10px;border-radius:10px;border:1.5px solid var(--accent-light);
+  font-family:inherit;font-size:13px;background:var(--white);color:var(--ink);
+}
+.rc-dateform button{flex:0 0 auto;border:none;background:var(--bg-alt);color:var(--primary-deep);
+  padding:9px 18px;border-radius:10px;font:inherit;font-weight:800;font-size:12.5px;cursor:pointer}
+.rc-dateform button:hover{background:var(--accent-light)}
+.rc-link{margin-inline-start:auto;white-space:nowrap}
+@media (max-width:520px){
+  .rc-dateform{width:100%}
+  .rc-dateform input[type="date"]{flex:1 1 auto;max-width:none}
+  .rc-link{margin-inline-start:0;width:100%;text-align:center;box-sizing:border-box}
+}
