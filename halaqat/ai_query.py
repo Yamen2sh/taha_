@@ -530,7 +530,8 @@ def _summarize(rows, group_by, people, month_cols):
 
 # ───────────────────────── الاتصال بالنموذج ─────────────────────────
 
-API_URL = 'https://api.anthropic.com/v1/messages'     # الافتراضي (يمكن تغييره من الإعدادات)
+API_URL = 'https://generativelanguage.googleapis.com/v1beta'   # الافتراضي: Gemini (بمفتاح واحد فقط)
+GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash'
 TOOL_NAME = 'build_query'
 
 DEFAULT_SYSTEM_PROMPT = """أنت مترجم أسئلة لنظام إحصائيات حضور حلقات القرآن في «مسجد طه». مهمتك الوحيدة: تحويل سؤال المستخدم إلى مواصفة استعلام منظّمة عبر الأداة build_query. لا تجب عن السؤال بنص، ولا تكتب SQL، ولا تخترع بيانات.
@@ -611,25 +612,69 @@ def provider_kind(base_url):
     """
     يحدّد شكل الطلب من عنوان الـ API:
       • anthropic  → https://api.anthropic.com/v1
+      • gemini     → https://generativelanguage.googleapis.com  (Google AI Studio / أي وكيل Google)
       • openai     → أي وكيل متوافق (OpenAI، OpenRouter، Groq، Together، DeepSeek، vLLM، Ollama…)
     """
     url = (base_url or '').lower()
-    return 'anthropic' if 'anthropic.com' in url else 'openai'
+    if 'anthropic.com' in url:
+        return 'anthropic'
+    if 'generativelanguage.googleapis.com' in url or 'googleapis.com' in url:
+        return 'gemini'
+    return 'openai'
 
 
 def _endpoint(base_url, kind):
     base = (base_url or '').rstrip('/')
     if kind == 'anthropic':
         return base + ('/messages' if base.endswith('/v1') else '/v1/messages')
+    if kind == 'gemini':
+        # https://generativelanguage.googleapis.com/v1beta/models/<model>:generateContent
+        return base + '/models/{model}:generateContent'
     # OpenAI-compatible: يقبل https://host/v1 أو https://host كاملاً
     return base + ('/chat/completions' if base.endswith('/v1') else '/v1/chat/completions')
 
 
+def _gemini_schema(schema):
+    """يحوّل مخطط الأداة (JSON Schema) إلى صيغة OpenAPI الجزئية التي يقبلها Gemini."""
+    def clean(node):
+        if isinstance(node, dict):
+            out = {}
+            for k, v in node.items():
+                if k in ('$schema', 'additionalProperties'):
+                    continue
+                if k == 'type' and isinstance(v, list):
+                    # ['string','null'] → string + nullable
+                    types = [t for t in v if t != 'null']
+                    out['type'] = types[0] if types else 'string'
+                    if 'null' in v:
+                        out['nullable'] = True
+                    continue
+                out[k] = clean(v)
+            return out
+        if isinstance(node, list):
+            return [clean(x) for x in node]
+        return node
+
+    params = clean(schema.get('input_schema') or {})
+    return {'name': schema['name'], 'description': schema.get('description', ''), 'parameters': params}
+
+
+def _render_prompt(template, today, circle_names):
+    """
+    يعبّئ {today} و{weekday} و{circles} في البرومت.
+    آمن ضد التعبئة المزدوجة (لو كان البرومت معبّأً مسبقاً) وضد أقواس JSON غير المتوازنة:
+    عند أي خطأ يُعاد النص كما هو بدل أن يفشل الطلب.
+    """
+    try:
+        return template.format(today=today.isoformat(), weekday=_WEEKDAYS[today.weekday()],
+                               circles='، '.join(circle_names) or '(لا توجد حلقات)')
+    except (KeyError, IndexError, ValueError, AttributeError):
+        return template
+
+
 def build_request_body(question, today, circle_names, model, kind='anthropic', prompt=None):
     """يبني جسم الطلب بحسب نوع المزوّد. البرومت يُعبَّأ بالتاريخ وأسماء الحلقات."""
-    system = (prompt or DEFAULT_SYSTEM_PROMPT).format(
-        today=today.isoformat(), weekday=_WEEKDAYS[today.weekday()],
-        circles='، '.join(circle_names) or '(لا توجد حلقات)')
+    system = _render_prompt(prompt or DEFAULT_SYSTEM_PROMPT, today, circle_names)
     schema = build_tool_schema()
 
     if kind == 'anthropic':
@@ -640,6 +685,16 @@ def build_request_body(question, today, circle_names, model, kind='anthropic', p
             'messages': [{'role': 'user', 'content': question}],
             'tools': [schema],
             'tool_choice': {'type': 'tool', 'name': TOOL_NAME},
+        }
+
+    if kind == 'gemini':
+        return {
+            'systemInstruction': {'parts': [{'text': system}]},
+            'contents': [{'role': 'user', 'parts': [{'text': question}]}],
+            'tools': [{'functionDeclarations': [_gemini_schema(schema)]}],
+            'toolConfig': {'functionCallingConfig': {'mode': 'ANY',
+                                                     'allowedFunctionNames': [TOOL_NAME]}},
+            'generationConfig': {'temperature': 0, 'maxOutputTokens': 1024},
         }
 
     # OpenAI-compatible: نفس الأداة بصيغة function calling
@@ -687,6 +742,22 @@ def _extract_spec_openai(data):
     return None
 
 
+def _extract_spec_gemini(data):
+    """يستخرج المواصفة من رد Gemini: functionCall أو نص JSON."""
+    for cand in data.get('candidates') or []:
+        for part in ((cand.get('content') or {}).get('parts') or []):
+            call = part.get('functionCall') or {}
+            if call.get('name') == TOOL_NAME and isinstance(call.get('args'), dict):
+                return call['args']
+            txt = (part.get('text') or '').strip()
+            if txt.startswith('{'):
+                try:
+                    return json.loads(txt)
+                except ValueError:
+                    pass
+    return None
+
+
 def ask_llm(question, today, circle_names, api_key, model, http=None, timeout=30,
             base_url=None, prompt=None):
     """
@@ -695,7 +766,7 @@ def ask_llm(question, today, circle_names, api_key, model, http=None, timeout=30
     يرفع AssistantError برسالة عربية.
     """
     from django.conf import settings
-    base_url = base_url or getattr(settings, 'AI_BASE_URL', '') or 'https://api.anthropic.com/v1'
+    base_url = base_url or getattr(settings, 'AI_BASE_URL', '') or API_URL
     if not api_key:
         raise AssistantError('ميزة السؤال بالذكاء الاصطناعي غير مفعّلة. اضبط مفتاح الـ API من '
                              '«المطور ← 🤖 الذكاء الاصطناعي» أو المتغيّر AI_API_KEY '
@@ -708,6 +779,9 @@ def ask_llm(question, today, circle_names, api_key, model, http=None, timeout=30
     headers = {'content-type': 'application/json'}
     if kind == 'anthropic':
         headers.update({'x-api-key': api_key, 'anthropic-version': '2023-06-01'})
+    elif kind == 'gemini':
+        headers['x-goog-api-key'] = api_key           # مفتاح Google AI Studio
+        url = url.replace('{model}', model or GEMINI_DEFAULT_MODEL)
     else:
         headers['authorization'] = f'Bearer {api_key}'
 
@@ -719,20 +793,35 @@ def ask_llm(question, today, circle_names, api_key, model, http=None, timeout=30
         raise AssistantError('تعذّر الاتصال بخدمة الذكاء الاصطناعي الآن. تحقّق من عنوان الـ API أو حاول بعد قليل.', 'network')
     status = getattr(resp, 'status_code', 0)
     if status in (401, 403):
-        raise AssistantError('مفتاح الذكاء الاصطناعي غير صالح أو منتهٍ. راجع إعدادات «المطور ← الذكاء الاصطناعي».', 'auth')
+        if kind == 'gemini':
+            raise AssistantError('مفتاح Gemini غير صالح أو غير مُفعَّل. تأكّد من GEMINI_API_KEY '
+                                 'من aistudio.google.com/apikey وأن الـ Generative Language API مفعّل.', 'auth')
+        raise AssistantError('مفتاح الذكاء الاصطناعي غير صالح أو منتهٍ. راجع متغيّرات البيئة على الخادم.', 'auth')
     if status == 404:
         raise AssistantError('عنوان الـ API أو اسم النموذج غير صحيح (404). راجع الإعدادات.', 'api')
     if status == 429:
         raise AssistantError('الخدمة مشغولة حالياً (تجاوز حدّ الطلبات). جرّب بعد دقيقة.', 'rate')
     if status >= 400:
-        logger.warning('خطأ من خدمة الذكاء الاصطناعي: %s %s', status, getattr(resp, 'text', '')[:300])
+        detail = ''
+        try:
+            detail = str((resp.json().get('error') or {}).get('message') or '')[:200]
+        except Exception:                                  # noqa: BLE001
+            detail = getattr(resp, 'text', '')[:200]
+        logger.warning('خطأ من خدمة الذكاء الاصطناعي: %s %s', status, detail)
+        if status == 400 and ('API key' in detail or 'api key' in detail.lower()):
+            raise AssistantError('مفتاح الـ API غير صحيح أو غير مرسل. راجع المتغيّرات البيئية.', 'auth')
         raise AssistantError('تعذّر فهم السؤال بسبب خطأ في الخدمة. حاول مجدداً.', 'api')
     try:
         data = resp.json()
     except ValueError:
         raise AssistantError('استجابة غير مفهومة من الخدمة.', 'api')
 
-    spec = _extract_spec_anthropic(data) if kind == 'anthropic' else _extract_spec_openai(data)
+    if kind == 'anthropic':
+        spec = _extract_spec_anthropic(data)
+    elif kind == 'gemini':
+        spec = _extract_spec_gemini(data)
+    else:
+        spec = _extract_spec_openai(data)
     if isinstance(spec, dict):
         return spec
     raise AssistantError('لم أتمكن من تحويل السؤال إلى استعلام. أعد صياغته أو استخدم «تعديل التفسير».', 'parse')
