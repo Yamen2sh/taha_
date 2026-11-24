@@ -1,101 +1,6 @@
 {% extends "halaqat/base.html" %}
 {% load static %}
-{% block title %}المطور — مسجد طه
-<script>
-function aiPayload(extra) {
-  return Object.assign({
-    api_key: document.getElementById('ai-key').value.trim(),
-    base_url: document.getElementById('ai-base').value.trim(),
-    model: document.getElementById('ai-model').value.trim(),
-    prompt: document.getElementById('ai-prompt').value,
-  }, extra || {});
-}
-
-async function saveAI(btn) {
-  setBtnLoading(btn, true);
-  try {
-    const res = await fetch("{% url 'developer_ai_save' %}", {
-      method: 'POST',
-      headers: {'X-CSRFToken': getCsrf(), 'X-Requested-With': 'XMLHttpRequest'},
-      body: new URLSearchParams(aiPayload()),
-    });
-    const d = await res.json();
-    if (d.ok) showToast('✅ حُفظت الإعدادات · النموذج: ' + d.model, 'success');
-    else showToast('⚠️ تعذّر الحفظ', 'warn');
-  } catch (e) { showToast('❌ خطأ في الاتصال', 'error'); }
-  finally { setBtnLoading(btn, false); }
-}
-
-async function testAI(btn) {
-  setBtnLoading(btn, true);
-  try {
-    const res = await fetch("{% url 'developer_ai_test' %}", {
-      method: 'POST',
-      headers: {'X-CSRFToken': getCsrf(), 'X-Requested-With': 'XMLHttpRequest'},
-    });
-    const d = await res.json();
-    if (d.ok) showToast('✅ الاتصال ناجح · النموذج ' + d.model, 'success', 5000);
-    else showToast('❌ ' + (d.error || 'فشل الاختبار'), 'error', 7000);
-  } catch (e) { showToast('❌ خطأ في الاتصال', 'error'); }
-  finally { setBtnLoading(btn, false); }
-}
-
-async function resetPrompt(btn) {
-  if (!confirm('إعادة البرومت إلى النسخة الافتراضية؟')) return;
-  setBtnLoading(btn, true);
-  try {
-    const res = await fetch("{% url 'developer_ai_save' %}", {
-      method: 'POST',
-      headers: {'X-CSRFToken': getCsrf(), 'X-Requested-With': 'XMLHttpRequest'},
-      body: new URLSearchParams(aiPayload({reset_prompt: '1'})),
-    });
-    if ((await res.json()).ok) { showToast('✅ أُعيد البرومت الافتراضي', 'success'); setTimeout(() => location.reload(), 700); }
-  } catch (e) { showToast('❌ خطأ في الاتصال', 'error'); }
-  finally { setBtnLoading(btn, false); }
-}
-
-async function importSqlite(btn) {
-  const input = document.getElementById('sqlite-file');
-  if (!input.files.length) { showToast('⚠️ اختر ملف SQLite أولاً', 'warn'); return; }
-  if (!confirm('⚠️ سيتم حذف كل البيانات الحالية واستبدالها ببيانات الملف.\nهل أخذت نسخة احتياطية؟ هل أنت متأكد؟')) return;
-  const fd = new FormData();
-  fd.append('sqlite_file', input.files[0]);
-  setBtnLoading(btn, true);
-  try {
-    const res = await fetch("{% url 'developer_sqlite_import' %}", {
-      method: 'POST',
-      headers: {'X-CSRFToken': getCsrf(), 'X-Requested-With': 'XMLHttpRequest'},
-      body: fd,
-    });
-    const d = await res.json();
-    if (d.ok) { showToast('✅ استُورد ' + d.total + ' سجلاً بنجاح', 'success', 6000); setTimeout(() => location.reload(), 1200); }
-    else showToast(d.error || '❌ فشل الاستيراد', 'error', 8000);
-  } catch (e) { showToast('❌ خطأ في الاتصال', 'error'); }
-  finally { setBtnLoading(btn, false); }
-}
-
-async function fillDefaults(btn) {
-  if (!confirm('ملء كل الخانات الفارغة بقيم افتراضية الآن؟')) return;
-  setBtnLoading(btn, true);
-  try {
-    const res = await fetch("{% url 'developer_fill_defaults' %}", {
-      method: 'POST',
-      headers: {'X-CSRFToken': getCsrf(), 'X-Requested-With': 'XMLHttpRequest'},
-    });
-    const d = await res.json();
-    const box = document.getElementById('defaults-result');
-    if (d.ok) {
-      box.innerHTML = d.total
-        ? '✅ تم ملء <b>' + d.total + '</b> خانة:<br>' + d.results.map(r => '• ' + r[0] + ': ' + r[1]).join('<br>')
-        : '✅ لا توجد خانات فارغة.';
-      showToast('✅ اكتمل الملء (' + d.total + ')', 'success');
-    } else showToast(d.error || '⚠️ تعذّر الملء', 'warn');
-  } catch (e) { showToast('❌ خطأ في الاتصال', 'error'); }
-  finally { setBtnLoading(btn, false); }
-}
-</script>
-
-{% endblock %}
+{% block title %}المطور — مسجد طه{% endblock %}
 {% block content %}
 
 <div class="page-header">
@@ -135,40 +40,58 @@ async function fillDefaults(btn) {
     <div style="font-size:12px; color:#9c8a71; margin-bottom:16px; line-height:1.7;">
       يعمل مع أي وكيل/مزوّد يدعم <b>فتح الدوال (function calling)</b>:
       Anthropic · OpenAI · Gemini (OpenAI-compat) · Groq · OpenRouter · Together · DeepSeek · Ollama · أي خادم محلي.
-      فقط ضع المفتاح والعنوان والنموذج — والنظام يتعرّف على شكل الطلب تلقائياً.
+      النظام يتعرّف على شكل الطلب تلقائياً من العنوان.
+    </div>
+
+    {# ── إعدادات الاتصال: متغيّرات بيئة فقط (للقراءة) ── #}
+    <div style="background:#f6f7f9;border:1px solid #dde1e7;border-radius:10px;padding:13px;margin-bottom:16px">
+      <div style="font-weight:700;font-size:13px;margin-bottom:9px;color:#3d4a5c">
+        🔒 إعدادات الاتصال تُضبط من <b>متغيّرات البيئة</b> على الخادم (لا تُحفظ في قاعدة البيانات ولا تُعدَّل من هنا)
+      </div>
+      <table style="width:100%;font-size:12px;line-height:2;border-collapse:collapse">
+        <tr>
+          <td style="padding:2px 0;color:#6b7787;white-space:nowrap;width:1%">المفتاح</td>
+          <td style="padding:2px 8px">
+            {% if ai_env.has_key %}
+              <b style="color:#2d9e5f">✅ مضبوط</b>
+              <code dir="ltr" style="font-size:11px;background:#fff;border:1px solid #e3e7ec;border-radius:5px;padding:1px 5px">{{ ai_env.key_hint }}</code>
+            {% else %}
+              <b style="color:#c0392b">⚠️ غير مضبوط</b>
+            {% endif %}
+            <code dir="ltr" style="font-size:11px;color:#8a94a2">{{ ai_env.key_env|default:"AI_API_KEY" }}</code>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:2px 0;color:#6b7787;white-space:nowrap">عنوان الـ API</td>
+          <td style="padding:2px 8px"><code dir="ltr" style="font-size:11.5px">{{ ai_env.base_url }}</code>
+            <span style="color:#a0a8b4;font-size:11px">← {{ ai_env.base_url_env }}</span></td>
+        </tr>
+        <tr>
+          <td style="padding:2px 0;color:#6b7787;white-space:nowrap">النموذج</td>
+          <td style="padding:2px 8px"><code dir="ltr" style="font-size:11.5px">{{ ai_env.model }}</code>
+            <span style="color:#a0a8b4;font-size:11px">← {{ ai_env.model_env }}</span></td>
+        </tr>
+      </table>
+      <div style="font-size:11px;color:#8a94a2;line-height:1.9;margin-top:9px;border-top:1px solid #e6eaef;padding-top:8px">
+        على الخادم أضِف المتغيّرات ثم أعد التشغيل:<br>
+        <code dir="ltr" style="font-size:11px">AI_API_KEY</code> ·
+        <code dir="ltr" style="font-size:11px">AI_BASE_URL</code> (افتراضي <code dir="ltr" style="font-size:11px">https://api.anthropic.com/v1</code>) ·
+        <code dir="ltr" style="font-size:11px">AI_MODEL</code><br>
+        وأمثلة للعناوين: <code dir="ltr" style="font-size:11px">https://api.openai.com/v1</code> ·
+        <code dir="ltr" style="font-size:11px">https://openrouter.ai/api/v1</code> ·
+        <code dir="ltr" style="font-size:11px">https://api.groq.com/openai/v1</code> ·
+        <code dir="ltr" style="font-size:11px">http://localhost:11434/v1</code>
+      </div>
     </div>
 
     <div style="display:grid;gap:12px">
-      <label style="font-size:12.5px;font-weight:700;color:#6b5a45">
-        مفتاح الـ API (يُخزَّن في قاعدة البيانات — لا يظهر في الكود)
-        <input id="ai-key" type="password" value="{{ ai.api_key }}" placeholder="sk-… / مفتاح أي مزوّد"
-               style="width:100%;margin-top:5px;padding:9px;border:1px solid #e2d7c5;border-radius:9px;font-size:13px" autocomplete="off">
-      </label>
-      <label style="font-size:12.5px;font-weight:700;color:#6b5a45">
-        عنوان الـ API (Base URL)
-        <input id="ai-base" type="text" value="{{ ai.base_url }}" placeholder="https://api.anthropic.com/v1"
-               style="width:100%;margin-top:5px;padding:9px;border:1px solid #e2d7c5;border-radius:9px;font-size:13px;direction:ltr" dir="ltr">
-      </label>
-      <label style="font-size:12.5px;font-weight:700;color:#6b5a45">
-        اسم النموذج
-        <input id="ai-model" type="text" value="{{ ai.model }}" placeholder="claude-haiku-5-5 / gpt-4o-mini / llama-3.3-70b"
-               style="width:100%;margin-top:5px;padding:9px;border:1px solid #e2d7c5;border-radius:9px;font-size:13px;direction:ltr" dir="ltr">
-      </label>
-      <div style="font-size:11.5px;color:#9c8a71;line-height:1.9;background:#fbf7f0;padding:9px 11px;border-radius:9px">
-        الحالة الآن:
-        {% if ai_effective.key %}<b style="color:#2d9e5f">✅ المفتاح مضبوط</b>{% else %}<b style="color:#c0392b">⚠️ لا يوجد مفتاح</b>{% endif %} ·
-        العنوان الفعّال: <code dir="ltr">{{ ai_effective.base_url }}</code> ·
-        النموذج الفعّال: <code dir="ltr">{{ ai_effective.model }}</code>
-        {% if ai_effective.from_env %}<br>القيم مأخوذة من متغيّرات البيئة (AI_API_KEY / AI_BASE_URL / AI_MODEL).{% endif %}
-      </div>
-
       <label style="font-size:12.5px;font-weight:700;color:#6b5a45">
         البرومت (نص تعليمات المساعد) — وهو <b>الافتراضي</b> المستخدم في كل سؤال
         <textarea id="ai-prompt" rows="14" dir="rtl"
                   style="width:100%;margin-top:5px;padding:10px;border:1px solid #e2d7c5;border-radius:9px;font-size:12.5px;line-height:1.75;font-family:inherit">{{ ai.prompt }}</textarea>
       </label>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button onclick="saveAI(this)" class="btn-primary" style="flex:1;min-width:150px">💾 حفظ الإعدادات</button>
+        <button onclick="saveAI(this)" class="btn-primary" style="flex:1;min-width:150px">💾 حفظ البرومت</button>
         <button onclick="testAI(this)" class="btn-outline" style="min-width:130px">🧪 اختبار الاتصال</button>
         <button onclick="resetPrompt(this)" class="btn-outline" style="min-width:130px">↩️ البرومت الافتراضي</button>
       </div>
@@ -291,12 +214,8 @@ async function sendToTelegram(btn) {
 
 <script>
 function aiPayload(extra) {
-  return Object.assign({
-    api_key: document.getElementById('ai-key').value.trim(),
-    base_url: document.getElementById('ai-base').value.trim(),
-    model: document.getElementById('ai-model').value.trim(),
-    prompt: document.getElementById('ai-prompt').value,
-  }, extra || {});
+  /* البرومت فقط يُحفظ — المفتاح/العنوان/النموذج متغيّرات بيئة على الخادم */
+  return Object.assign({ prompt: document.getElementById('ai-prompt').value }, extra || {});
 }
 
 async function saveAI(btn) {
@@ -308,7 +227,7 @@ async function saveAI(btn) {
       body: new URLSearchParams(aiPayload()),
     });
     const d = await res.json();
-    if (d.ok) showToast('✅ حُفظت الإعدادات · النموذج: ' + d.model, 'success');
+    if (d.ok) showToast('✅ حُفظ البرومت (' + d.prompt_chars + ' حرفاً) · النموذج من البيئة: ' + d.model, 'success', 5000);
     else showToast('⚠️ تعذّر الحفظ', 'warn');
   } catch (e) { showToast('❌ خطأ في الاتصال', 'error'); }
   finally { setBtnLoading(btn, false); }

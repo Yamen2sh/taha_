@@ -1772,12 +1772,7 @@ def developer_page(request):
         'cache_status': cache_utils.status(),
         'ai': ai_cfg,
         'ai_default_prompt': DEFAULT_SYSTEM_PROMPT,
-        'ai_effective': {
-            'key': bool(ai_cfg.effective_key()),
-            'base_url': ai_cfg.effective_base_url(),
-            'model': ai_cfg.effective_model(),
-            'from_env': not (ai_cfg.api_key or ai_cfg.base_url or ai_cfg.model),
-        },
+        'ai_env': AISettings.env_status(),          # المفتاح/العنوان/النموذج من متغيّرات البيئة فقط
         'db_engine': connection.vendor,
     })
 
@@ -1929,21 +1924,21 @@ def developer_fill_defaults(request):
 @login_required
 @require_POST
 def developer_ai_save(request):
-    """حفظ إعدادات الذكاء الاصطناعي (مفتاح أي وكيل + العنوان + النموذج + البرومت)."""
+    """
+    يحفظ **البرومت فقط** في قاعدة البيانات.
+    مفتاح الـ API وعنوانه واسم النموذج لا تُحفظ هنا ولا تُقبل من الواجهة — فهي متغيّرات بيئة.
+    """
     cfg = AISettings.load()
-    cfg.api_key = (request.POST.get('api_key') or '').strip()[:255]
-    cfg.base_url = (request.POST.get('base_url') or '').strip()[:255]
-    cfg.model = (request.POST.get('model') or '').strip()[:120]
-    prompt = (request.POST.get('prompt') or '').strip()
     from .ai_query import DEFAULT_SYSTEM_PROMPT
-    cfg.prompt = prompt or DEFAULT_SYSTEM_PROMPT
-    cfg.save()
+    prompt = (request.POST.get('prompt') or '').strip()
     if request.POST.get('reset_prompt'):
-        cfg.prompt = DEFAULT_SYSTEM_PROMPT
-        cfg.save(update_fields=['prompt'])
-    _log_admin_action(request, '🤖 تعديل إعدادات المساعد الإحصائي')
-    return JsonResponse({'ok': True, 'model': cfg.effective_model(), 'base_url': cfg.effective_base_url(),
-                         'has_key': bool(cfg.effective_key())})
+        prompt = DEFAULT_SYSTEM_PROMPT
+    cfg.prompt = prompt or DEFAULT_SYSTEM_PROMPT
+    cfg.save(update_fields=['prompt', 'updated_at'])
+    _log_admin_action(request, '🤖 تعديل برومت المساعد الإحصائي')
+    env = AISettings.env_status()
+    return JsonResponse({'ok': True, 'has_key': env['has_key'], 'model': env['model'],
+                         'base_url': env['base_url'], 'prompt_chars': len(cfg.prompt)})
 
 
 @login_required
@@ -1952,7 +1947,9 @@ def developer_ai_test(request):
     """اختبار سريع للاتصال: يرسل سؤالاً بسيطاً ويتحقق من إرجاع مواصفة صالحة."""
     cfg = AISettings.load()
     if not cfg.effective_key():
-        return JsonResponse({'ok': False, 'error': 'لم يُضبط مفتاح API بعد'}, status=400)
+        return JsonResponse({'ok': False, 'code': 'no_key',
+                             'error': 'لم يُضبط مفتاح الـ API. أضف المتغيّر البيئي AI_API_KEY '
+                                      '(أو ANTHROPIC_API_KEY) في إعدادات الخادم ثم أعد التشغيل.'}, status=200)
     circles = cache_utils.circles()
     names = [c['name'] for c in circles]
     today = timezone.localdate()
@@ -3327,7 +3324,7 @@ def stats_assistant_ask(request):
     if not api_key:
         return JsonResponse({'ok': False, 'code': 'no_key',
                              'error': 'ميزة السؤال بالذكاء الاصطناعي غير مفعّلة (لم يُضبط مفتاح الـ API). '
-                                      'اضبطه من «المطور ← 🤖 الذكاء الاصطناعي» أو استخدم «بناء يدوي».'}, status=503)
+                                      'أضف المتغيّر البيئي AI_API_KEY في إعدادات الخادم، أو استخدم «بناء يدوي».'}, status=503)
     limit = getattr(settings, 'ASSISTANT_RATE_LIMIT_PER_HOUR', 30)
     if not cache_utils.rate_limit(f'assistant:{request.user.get_username()}', limit):
         return JsonResponse({'ok': False, 'code': 'rate',

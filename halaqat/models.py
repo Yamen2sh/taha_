@@ -523,18 +523,17 @@ class AssistantQuery(models.Model):
 
 class AISettings(models.Model):
     """
-    إعدادات المساعد الإحصائي (صف واحد فقط، يُحرَّر من «المطور ← 🤖 الذكاء الاصطناعي»).
+    إعدادات المساعد الإحصائي — **البرومت فقط** (صف واحد، يُحرَّر من «المطور ← 🤖 الذكاء الاصطناعي»).
 
-    • api_key / base_url / model: أي مزوّد أو وكيل متوافق (OpenAI-compatible أو Anthropic).
-      إن تُركت فارغة يُستخدم ما في متغيّرات البيئة (AI_API_KEY / AI_BASE_URL / AI_MODEL).
     • prompt: نص البرومت (system prompt) المستخدم فعلياً — يُملأ تلقائياً بالنص الافتراضي
       المضمّن في ai_query.DEFAULT_SYSTEM_PROMPT أول مرة، ويمكن تعديله من الصفحة.
+
+    ملاحظة أمنية/تشغيلية: **مفتاح الـ API وعنوانه واسم النموذج لا تُحفظ في قاعدة البيانات أبداً**،
+    بل تُقرأ من متغيّرات البيئة فقط: AI_API_KEY / AI_BASE_URL / AI_MODEL
+    (وأسماء ANTHROPIC_API_KEY / ANTHROPIC_MODEL كبديل للتوافق).
     """
 
     name = models.CharField('الاسم', max_length=20, default='default', unique=True)
-    api_key = models.CharField('مفتاح API', max_length=255, blank=True, default='')
-    base_url = models.CharField('عنوان الـ API', max_length=255, blank=True, default='')
-    model = models.CharField('اسم النموذج', max_length=120, blank=True, default='')
     prompt = models.TextField('البرومت (system prompt)', blank=True, default='')
     updated_at = models.DateTimeField('آخر تعديل', auto_now=True)
 
@@ -555,19 +554,40 @@ class AISettings(models.Model):
             obj.save(update_fields=['prompt'])
         return obj
 
-    # ── القيم الفعّالة (قاعدة البيانات تتقدّم، ثم متغيّرات البيئة) ──
-    def effective_key(self):
+    # ── القيم الفعّالة: من متغيّرات البيئة فقط (لا قاعدة بيانات) ──
+    @staticmethod
+    def effective_key():
         from django.conf import settings
-        return self.api_key.strip() or getattr(settings, 'AI_API_KEY', '')
+        return getattr(settings, 'AI_API_KEY', '')
 
-    def effective_base_url(self):
+    @staticmethod
+    def effective_base_url():
         from django.conf import settings
-        return (self.base_url.strip() or getattr(settings, 'AI_BASE_URL', '')
-                or 'https://api.anthropic.com/v1')
+        return getattr(settings, 'AI_BASE_URL', '') or 'https://api.anthropic.com/v1'
 
-    def effective_model(self):
+    @staticmethod
+    def effective_model():
         from django.conf import settings
-        return self.model.strip() or getattr(settings, 'AI_MODEL', '') or 'claude-haiku-5-5'
+        return getattr(settings, 'AI_MODEL', '') or 'claude-haiku-5-5'
+
+    @staticmethod
+    def env_status():
+        """حالة متغيّرات البيئة (للعرض في صفحة المطور دون كشف المفتاح)."""
+        import os
+        from django.conf import settings
+        key = getattr(settings, 'AI_API_KEY', '') or ''
+        return {
+            'has_key': bool(key),
+            'key_hint': (key[:4] + '…' + key[-4:]) if len(key) > 12 else ('••••' if key else ''),
+            'key_env': ('AI_API_KEY' if os.environ.get('AI_API_KEY')
+                        else 'ANTHROPIC_API_KEY' if os.environ.get('ANTHROPIC_API_KEY')
+                        else 'OPENAI_API_KEY' if os.environ.get('OPENAI_API_KEY') else ''),
+            'base_url': getattr(settings, 'AI_BASE_URL', '') or 'https://api.anthropic.com/v1',
+            'base_url_env': 'AI_BASE_URL' if os.environ.get('AI_BASE_URL') else '(الافتراضي)',
+            'model': getattr(settings, 'AI_MODEL', '') or 'claude-haiku-5-5',
+            'model_env': ('AI_MODEL' if os.environ.get('AI_MODEL')
+                          else 'ANTHROPIC_MODEL' if os.environ.get('ANTHROPIC_MODEL') else '(الافتراضي)'),
+        }
 
     def prompt_for(self, today, circle_names, weekday):
         """البرومت النهائي بعد تعبئة التاريخ وأسماء الحلقات."""

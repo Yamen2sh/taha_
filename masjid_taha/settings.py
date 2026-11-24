@@ -229,7 +229,8 @@ LOGOUT_REDIRECT_URL  = 'login'
 #   AI_BASE_URL  : عنوان الـ API، مثل https://api.openai.com/v1  أو  https://api.anthropic.com/v1
 #                  (ويعمل مع أي وكيل متوافق: OpenRouter، Groq، Together، DeepSeek، vLLM، Ollama…)
 #   AI_MODEL     : اسم النموذج لدى المزوّد (gpt-4o-mini، claude-3-5-haiku…، llama-3.1-70b…)
-# يمكن أيضاً ضبطها من «المطور ← 🤖 الذكاء الاصطناعي» (قاعدة البيانات تتقدّم على متغيّرات البيئة).
+# تُضبط **حصرياً** من متغيّرات البيئة (لا تُحفظ في قاعدة البيانات ولا تُدخل من الواجهة إن لم تُضبط).
+# البرومت وحده قابل للتحرير من «المطور ← 🤖 الذكاء الاصطناعي».
 AI_API_KEY = os.environ.get('AI_API_KEY') or os.environ.get('ANTHROPIC_API_KEY') or os.environ.get('OPENAI_API_KEY', '')
 AI_BASE_URL = os.environ.get('AI_BASE_URL', 'https://api.anthropic.com/v1')
 AI_MODEL = os.environ.get('AI_MODEL') or os.environ.get('ANTHROPIC_MODEL', 'claude-haiku-5-5')
