@@ -529,8 +529,8 @@ class AISettings(models.Model):
       المضمّن في ai_query.DEFAULT_SYSTEM_PROMPT أول مرة، ويمكن تعديله من الصفحة.
 
     ملاحظة أمنية/تشغيلية: **مفتاح الـ API وعنوانه واسم النموذج لا تُحفظ في قاعدة البيانات أبداً**،
-    بل تُقرأ من متغيّرات البيئة فقط: AI_API_KEY / AI_BASE_URL / AI_MODEL
-    (وأسماء ANTHROPIC_API_KEY / ANTHROPIC_MODEL كبديل للتوافق).
+    بل تُقرأ من متغيّرات البيئة فقط. المطلوب عملياً مفتاح واحد فقط:
+      GEMINI_API_KEY (أو AI_API_KEY / GOOGLE_API_KEY) — والعنوان والنموذج لهما قيم Gemini افتراضية.
     """
 
     name = models.CharField('الاسم', max_length=20, default='default', unique=True)
@@ -563,12 +563,12 @@ class AISettings(models.Model):
     @staticmethod
     def effective_base_url():
         from django.conf import settings
-        return getattr(settings, 'AI_BASE_URL', '') or 'https://api.anthropic.com/v1'
+        return getattr(settings, 'AI_BASE_URL', '') or 'https://generativelanguage.googleapis.com/v1beta'
 
     @staticmethod
     def effective_model():
         from django.conf import settings
-        return getattr(settings, 'AI_MODEL', '') or 'claude-haiku-5-5'
+        return getattr(settings, 'AI_MODEL', '') or 'gemini-2.5-flash'
 
     @staticmethod
     def env_status():
@@ -579,14 +579,15 @@ class AISettings(models.Model):
         return {
             'has_key': bool(key),
             'key_hint': (key[:4] + '…' + key[-4:]) if len(key) > 12 else ('••••' if key else ''),
-            'key_env': ('AI_API_KEY' if os.environ.get('AI_API_KEY')
+            'key_env': ('GEMINI_API_KEY' if os.environ.get('GEMINI_API_KEY')
+                        else 'GOOGLE_API_KEY' if os.environ.get('GOOGLE_API_KEY')
+                        else 'AI_API_KEY' if os.environ.get('AI_API_KEY')
                         else 'ANTHROPIC_API_KEY' if os.environ.get('ANTHROPIC_API_KEY')
                         else 'OPENAI_API_KEY' if os.environ.get('OPENAI_API_KEY') else ''),
-            'base_url': getattr(settings, 'AI_BASE_URL', '') or 'https://api.anthropic.com/v1',
-            'base_url_env': 'AI_BASE_URL' if os.environ.get('AI_BASE_URL') else '(الافتراضي)',
-            'model': getattr(settings, 'AI_MODEL', '') or 'claude-haiku-5-5',
-            'model_env': ('AI_MODEL' if os.environ.get('AI_MODEL')
-                          else 'ANTHROPIC_MODEL' if os.environ.get('ANTHROPIC_MODEL') else '(الافتراضي)'),
+            'base_url': getattr(settings, 'AI_BASE_URL', '') or 'https://generativelanguage.googleapis.com/v1beta',
+            'base_url_env': 'AI_BASE_URL' if os.environ.get('AI_BASE_URL') else '(افتراضي: Gemini)',
+            'model': getattr(settings, 'AI_MODEL', '') or 'gemini-2.5-flash',
+            'model_env': 'AI_MODEL' if os.environ.get('AI_MODEL') else '(افتراضي: Gemini)',
         }
 
     def prompt_for(self, today, circle_names, weekday):

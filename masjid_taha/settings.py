@@ -222,18 +222,21 @@ LOGIN_URL            = 'login'
 LOGIN_REDIRECT_URL   = 'home'
 LOGOUT_REDIRECT_URL  = 'login'
 
-# ── المساعد الإحصائي: مفتاح أي وكيل ذكاء اصطناعي (OpenAI-compatible أو Anthropic) ──
-# بدون المفتاح تعمل الصفحة بوضع «تعديل التفسير» اليدوي فقط.
+# ── المساعد الإحصائي: Google Gemini (مفتاح واحد فقط) ──────────────────────
+# المطلوب: مفتاح Gemini فقط من https://aistudio.google.com/apikey
+#   GEMINI_API_KEY  (أو AI_API_KEY / GOOGLE_API_KEY — كلها مقبولة) وبدونها يعمل «تعديل التفسير» اليدوي.
 # النموذج يستقبل السؤال وأسماء الحلقات فقط (لا بيانات طلاب).
-#   AI_API_KEY   : مفتاح أي مزوّد (يُقبل أيضاً ANTHROPIC_API_KEY / OPENAI_API_KEY كأسماء بديلة)
-#   AI_BASE_URL  : عنوان الـ API، مثل https://api.openai.com/v1  أو  https://api.anthropic.com/v1
-#                  (ويعمل مع أي وكيل متوافق: OpenRouter، Groq، Together، DeepSeek، vLLM، Ollama…)
-#   AI_MODEL     : اسم النموذج لدى المزوّد (gpt-4o-mini، claude-3-5-haiku…، llama-3.1-70b…)
-# تُضبط **حصرياً** من متغيّرات البيئة (لا تُحفظ في قاعدة البيانات ولا تُدخل من الواجهة إن لم تُضبط).
-# البرومت وحده قابل للتحرير من «المطور ← 🤖 الذكاء الاصطناعي».
-AI_API_KEY = os.environ.get('AI_API_KEY') or os.environ.get('ANTHROPIC_API_KEY') or os.environ.get('OPENAI_API_KEY', '')
-AI_BASE_URL = os.environ.get('AI_BASE_URL', 'https://api.anthropic.com/v1')
-AI_MODEL = os.environ.get('AI_MODEL') or os.environ.get('ANTHROPIC_MODEL', 'claude-haiku-5-5')
+# عنوان الـ API واسم النموذج لهما قيم افتراضية جاهزة — لا تحتاج ضبطهما إلا إن أردت مزوّداً آخر.
+#   AI_BASE_URL (اختياري)  الافتراضي: https://generativelanguage.googleapis.com/v1beta
+#   AI_MODEL    (اختياري)  الافتراضي: gemini-2.5-flash
+_AI_BASE_DEFAULT = 'https://generativelanguage.googleapis.com/v1beta'
+_AI_MODEL_DEFAULT = 'gemini-2.5-flash'
+
+AI_API_KEY = (os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY')
+              or os.environ.get('AI_API_KEY') or os.environ.get('ANTHROPIC_API_KEY')
+              or os.environ.get('OPENAI_API_KEY', ''))
+AI_BASE_URL = os.environ.get('AI_BASE_URL') or _AI_BASE_DEFAULT
+AI_MODEL = os.environ.get('AI_MODEL') or _AI_MODEL_DEFAULT
 # للتوافق مع الكود القديم
 ANTHROPIC_API_KEY = AI_API_KEY
 ANTHROPIC_MODEL = AI_MODEL

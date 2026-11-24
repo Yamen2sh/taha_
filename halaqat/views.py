@@ -1948,8 +1948,8 @@ def developer_ai_test(request):
     cfg = AISettings.load()
     if not cfg.effective_key():
         return JsonResponse({'ok': False, 'code': 'no_key',
-                             'error': 'لم يُضبط مفتاح الـ API. أضف المتغيّر البيئي AI_API_KEY '
-                                      '(أو ANTHROPIC_API_KEY) في إعدادات الخادم ثم أعد التشغيل.'}, status=200)
+                             'error': 'لم يُضبط مفتاح Gemini. أضف المتغيّر البيئي GEMINI_API_KEY '
+                                      '(من aistudio.google.com/apikey) في إعدادات الخادم ثم أعد التشغيل.'}, status=200)
     circles = cache_utils.circles()
     names = [c['name'] for c in circles]
     today = timezone.localdate()
@@ -3323,8 +3323,8 @@ def stats_assistant_ask(request):
     api_key = ai_cfg.effective_key()
     if not api_key:
         return JsonResponse({'ok': False, 'code': 'no_key',
-                             'error': 'ميزة السؤال بالذكاء الاصطناعي غير مفعّلة (لم يُضبط مفتاح الـ API). '
-                                      'أضف المتغيّر البيئي AI_API_KEY في إعدادات الخادم، أو استخدم «بناء يدوي».'}, status=503)
+                             'error': 'ميزة السؤال بالذكاء الاصطناعي غير مفعّلة (لم يُضبط مفتاح Gemini). '
+                                      'أضف المتغيّر البيئي GEMINI_API_KEY في إعدادات الخادم، أو استخدم «بناء يدوي».'}, status=503)
     limit = getattr(settings, 'ASSISTANT_RATE_LIMIT_PER_HOUR', 30)
     if not cache_utils.rate_limit(f'assistant:{request.user.get_username()}', limit):
         return JsonResponse({'ok': False, 'code': 'rate',

@@ -36,17 +36,19 @@
 
 <section class="subpane" data-tab="ai" data-title="🤖 الذكاء الاصطناعي">
   <div class="panel" style="border-right:4px solid #7A5AA8;">
-    <div style="font-weight:700; font-size:15px; margin-bottom:6px;">🤖 المساعد الإحصائي — أي مزوّد API</div>
+    <div style="font-weight:700; font-size:15px; margin-bottom:6px;">🤖 المساعد الإحصائي — Google Gemini</div>
     <div style="font-size:12px; color:#9c8a71; margin-bottom:16px; line-height:1.7;">
-      يعمل مع أي وكيل/مزوّد يدعم <b>فتح الدوال (function calling)</b>:
-      Anthropic · OpenAI · Gemini (OpenAI-compat) · Groq · OpenRouter · Together · DeepSeek · Ollama · أي خادم محلي.
-      النظام يتعرّف على شكل الطلب تلقائياً من العنوان.
+      <b>المطلوب مفتاح واحد فقط:</b> مفتاح Gemini من
+      <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:#7A5AA8;font-weight:700">aistudio.google.com/apikey</a>
+      ← يُضاف كمتغيّر بيئة <code dir="ltr">GEMINI_API_KEY</code> ويعمل فوراً.
+      العنوان والنموذج لهما قيم افتراضية (<code dir="ltr">gemini-2.5-flash</code>) فلا تحتاج ضبطهما.
+      <br>(يبقى يعمل أيضاً مع أي مزوّد آخر يدعم فتح الدوال: Anthropic · OpenAI · OpenRouter · Groq · Ollama…)
     </div>
 
     {# ── إعدادات الاتصال: متغيّرات بيئة فقط (للقراءة) ── #}
     <div style="background:#f6f7f9;border:1px solid #dde1e7;border-radius:10px;padding:13px;margin-bottom:16px">
       <div style="font-weight:700;font-size:13px;margin-bottom:9px;color:#3d4a5c">
-        🔒 إعدادات الاتصال تُضبط من <b>متغيّرات البيئة</b> على الخادم (لا تُحفظ في قاعدة البيانات ولا تُعدَّل من هنا)
+        🔒 مفتاح Gemini يُضاف كمتغيّر بيئة فقط (لا يُحفظ في قاعدة البيانات ولا يُعدَّل من هنا)
       </div>
       <table style="width:100%;font-size:12px;line-height:2;border-collapse:collapse">
         <tr>
@@ -58,7 +60,7 @@
             {% else %}
               <b style="color:#c0392b">⚠️ غير مضبوط</b>
             {% endif %}
-            <code dir="ltr" style="font-size:11px;color:#8a94a2">{{ ai_env.key_env|default:"AI_API_KEY" }}</code>
+            <code dir="ltr" style="font-size:11px;color:#8a94a2">{{ ai_env.key_env|default:"GEMINI_API_KEY" }}</code>
           </td>
         </tr>
         <tr>
@@ -73,14 +75,12 @@
         </tr>
       </table>
       <div style="font-size:11px;color:#8a94a2;line-height:1.9;margin-top:9px;border-top:1px solid #e6eaef;padding-top:8px">
-        على الخادم أضِف المتغيّرات ثم أعد التشغيل:<br>
-        <code dir="ltr" style="font-size:11px">AI_API_KEY</code> ·
-        <code dir="ltr" style="font-size:11px">AI_BASE_URL</code> (افتراضي <code dir="ltr" style="font-size:11px">https://api.anthropic.com/v1</code>) ·
-        <code dir="ltr" style="font-size:11px">AI_MODEL</code><br>
-        وأمثلة للعناوين: <code dir="ltr" style="font-size:11px">https://api.openai.com/v1</code> ·
-        <code dir="ltr" style="font-size:11px">https://openrouter.ai/api/v1</code> ·
-        <code dir="ltr" style="font-size:11px">https://api.groq.com/openai/v1</code> ·
-        <code dir="ltr" style="font-size:11px">http://localhost:11434/v1</code>
+        على الخادم أضِف متغيّراً واحداً فقط ثم أعد التشغيل:<br>
+        <code dir="ltr" style="font-size:11.5px;font-weight:700;color:#3d4a5c">GEMINI_API_KEY=···</code><br>
+        (مقبول أيضاً <code dir="ltr" style="font-size:11px">AI_API_KEY</code> أو <code dir="ltr" style="font-size:11px">GOOGLE_API_KEY</code>).
+        العنوان الافتراضي <code dir="ltr" style="font-size:11px">generativelanguage.googleapis.com/v1beta</code>
+        والنموذج <code dir="ltr" style="font-size:11px">gemini-2.5-flash</code> —
+        يمكن تغييرهما اختيارياً بـ <code dir="ltr" style="font-size:11px">AI_BASE_URL</code> و<code dir="ltr" style="font-size:11px">AI_MODEL</code>.
       </div>
     </div>
 
