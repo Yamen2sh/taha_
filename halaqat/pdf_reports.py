@@ -10,7 +10,8 @@
 """
 import io
 import os
-import datetime
+
+from django.utils import timezone
 
 import arabic_reshaper
 from bidi.algorithm import get_display
@@ -401,7 +402,7 @@ def build_stats_pdf(ctx):
 
     who_label = {'students': 'الطلاب فقط', 'staff': 'الكادر فقط', 'both': 'الطلاب والكادر'}[ctx['who']]
     scope_label = f"حلقة {ctx['circle'].name}" if ctx['circle'] else 'كامل المسجد (حلقات + دورات + تفقد عام)'
-    now = datetime.datetime.now()
+    now = timezone.localtime()                      # توقيت الرياض لا توقيت الخادم (UTC)
 
     story = [
         _banner('تقرير إحصائيات الحضور — مسجد طه'),
@@ -488,7 +489,7 @@ def build_table_pdf(result):
     for part in str(result.get('understood') or '').split(' · '):
         if part.strip():
             story.append(_line(part.strip(), 10))
-    story.append(_line(f'تاريخ إنشاء التقرير: {datetime.datetime.now():%Y-%m-%d %H:%M}', 8.5, colors.grey))
+    story.append(_line(f'تاريخ إنشاء التقرير: {timezone.localtime():%Y-%m-%d %H:%M}', 8.5, colors.grey))
     story.append(Spacer(1, 8))
 
     lead = [i for i, c in enumerate(cols) if c['kind'] == 'text']

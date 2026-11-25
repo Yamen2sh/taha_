@@ -436,13 +436,16 @@
         <div><div class="dn-title"></div><div class="dn-teacher"></div></div>
         <span class="dn-count" data-count>0</span>
       </header>
-      ${c.teacher ? `<div class="dn-teacher-card" data-teacher="${c.teacher_id}" data-name="${c.teacher}">
+      ${c.teacher ? `<div class="dn-teacher-card" data-teacher="${c.teacher_id}">
         <span class="dn-tgrip" aria-hidden="true">⠿</span>
         <span class="dn-tname"></span><span class="dn-trole">أستاذ الحلقة</span></div>` : ''}
       <div class="dn-list" data-list><div class="dn-empty">اسحب طلاباً إلى هنا</div></div>`;
     sec.querySelector('.dn-title').textContent = c.name;
     sec.querySelector('.dn-teacher').textContent = c.teacher || 'بلا أستاذ';
-    if (c.teacher) sec.querySelector('.dn-tname').textContent = '👨‍🏫 ' + c.teacher;
+    if (c.teacher) {
+      sec.querySelector('.dn-tname').textContent = '👨‍🏫 ' + c.teacher;
+      sec.querySelector('.dn-teacher-card').dataset.name = c.teacher;     // dataset: آمن مع الاقتباسات والرموز
+    }
     park.parentNode.insertBefore(sec, park);
     // أضِف الحلقة إلى قائمة اختيار الحلقة في نموذج إضافة طالب
     const sel = document.querySelector('.dn-addform[data-kind="student"] select');

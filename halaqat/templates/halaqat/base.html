@@ -30,7 +30,7 @@
   </nav>
 
   <div class="brand-actions">
-    <form action="{% url 'logout' %}" method="post" style="display:contents" onsubmit="try{localStorage.removeItem('taha_students_index_v1')}catch(e){}">
+    <form action="{% url 'logout' %}" method="post" style="display:contents" onsubmit="try{localStorage.removeItem('taha_students_index_v1')}catch(e){}try{caches.delete('taha-pages-v2')}catch(e){}">
       {% csrf_token %}
       <button type="submit" class="icon-btn" title="تسجيل الخروج">⏻</button>
     </form>
@@ -39,7 +39,7 @@
 {% endif %}
 
 <div class="page-wrap">
-  {% if schema_alert and schema_alert.count %}
+  {% if schema_alert and schema_alert.count and is_superuser %}
   <div class="schema-alert" role="alert">
     ⚠️ قاعدة البيانات تحتاج تحديثاً ({{ schema_alert.count }} ترحيلاً غير مطبَّق{% if schema_alert.missing %} · جداول مفقودة: {{ schema_alert.missing|join:", " }}{% endif %}).
     <a href="{% url 'developer_page' %}#schema">فتح صفحة المطور لتطبيقها ←</a>

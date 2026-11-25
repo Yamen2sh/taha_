@@ -254,6 +254,7 @@ async function sendToTelegram(btn) {
   setBtnLoading(btn, true);
   try {
     const res = await fetch('{% url "send_all_data_telegram" %}', {
+      method: 'POST',
       headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': getCsrf() }
     });
     const data = await res.json();

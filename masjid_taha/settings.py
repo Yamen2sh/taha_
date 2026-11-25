@@ -213,13 +213,6 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 _ALLOW_FRAME = os.environ.get('DJANGO_ALLOW_FRAME', '').lower() in ('1', 'true', 'yes') or DEBUG
 X_FRAME_OPTIONS = 'SAMEORIGIN' if _ALLOW_FRAME else 'DENY'
 
-# كوكيز تعمل داخل إطار المعاينة عبر نطاق مختلف (معاينة فقط: PREVIEW_MODE=1)
-if os.environ.get('PREVIEW_MODE', '').lower() in ('1', 'true', 'yes'):
-    SESSION_COOKIE_SAMESITE = 'None'
-    CSRF_COOKIE_SAMESITE = 'None'
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
-
 LOGIN_URL            = 'login'
 LOGIN_REDIRECT_URL   = 'home'
 LOGOUT_REDIRECT_URL  = 'login'
@@ -234,11 +227,32 @@ LOGOUT_REDIRECT_URL  = 'login'
 _AI_BASE_DEFAULT = 'https://generativelanguage.googleapis.com/v1beta'
 _AI_MODEL_DEFAULT = 'gemini-2.5-flash'
 
-AI_API_KEY = (os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY')
-              or os.environ.get('AI_API_KEY') or os.environ.get('ANTHROPIC_API_KEY')
-              or os.environ.get('OPENAI_API_KEY', ''))
 AI_BASE_URL = os.environ.get('AI_BASE_URL') or _AI_BASE_DEFAULT
 AI_MODEL = os.environ.get('AI_MODEL') or _AI_MODEL_DEFAULT
+
+
+def _pick_ai_key(base_url):
+    """
+    يختار مفتاح الـ API المناسب لمزوّد العنوان الفعلي، فلا يُرسَل مفتاح مزوّد إلى مزوّد آخر
+    (مثلاً OPENAI_API_KEY لا يُرسَل إلى Google). يعيد (المفتاح، اسم المتغيّر المستخدم).
+    """
+    for name in ('GEMINI_API_KEY', 'GOOGLE_API_KEY', 'AI_API_KEY'):      # صريحة: تُستخدم كما هي
+        if os.environ.get(name):
+            return os.environ[name], name
+    host = (base_url or '').lower()
+    if 'anthropic.com' in host:
+        names = ('ANTHROPIC_API_KEY',)
+    elif 'googleapis.com' in host:
+        names = ()                                                       # Gemini يحتاج مفتاح Gemini فقط
+    else:
+        names = ('OPENAI_API_KEY',)                                      # أي واجهة متوافقة مع OpenAI
+    for name in names:
+        if os.environ.get(name):
+            return os.environ[name], name
+    return '', ''
+
+
+AI_API_KEY, AI_API_KEY_ENV = _pick_ai_key(AI_BASE_URL)
 # للتوافق مع الكود القديم
 ANTHROPIC_API_KEY = AI_API_KEY
 ANTHROPIC_MODEL = AI_MODEL
@@ -257,3 +271,11 @@ SESSION_COOKIE_SECURE = _COOKIE_SECURE
 CSRF_COOKIE_SECURE = _COOKIE_SECURE
 if _COOKIE_SECURE:
     SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')   # Render ينهي TLS عند الوسيط
+
+# كوكيز تعمل داخل إطار المعاينة عبر نطاق مختلف (معاينة فقط: PREVIEW_MODE=1)
+# موضعه هنا في آخر الملف عمداً: لو سبق إعدادات الكوكيز العامة أعلاه لألغت قيمَه (Lax / Secure).
+if os.environ.get('PREVIEW_MODE', '').lower() in ('1', 'true', 'yes'):
+    SESSION_COOKIE_SAMESITE = 'None'
+    CSRF_COOKIE_SAMESITE = 'None'
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True

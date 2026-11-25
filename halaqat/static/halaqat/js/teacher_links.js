@@ -20,7 +20,12 @@
   function refreshCard(card, c) {
     const main = card.querySelector('[data-main]');
     if (c.teacher) {
-      main.innerHTML = `<a href="/teachers/${c.teacher_id}/profile/" class="student-link">${c.teacher}</a>`;
+      const link = document.createElement('a');                  // textContent: اسم الأستاذ نصٌّ خام لا HTML
+      link.href = `/teachers/${encodeURIComponent(c.teacher_id)}/profile/`;
+      link.className = 'student-link';
+      link.textContent = c.teacher;
+      main.textContent = '';
+      main.appendChild(link);
       card.querySelector('[data-role="teacher"]').value = c.teacher_id;
       card.querySelector('.tl-head').classList.remove('no-teacher');
     } else {

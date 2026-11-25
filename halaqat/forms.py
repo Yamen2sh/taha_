@@ -71,7 +71,7 @@ class StudentForm(forms.ModelForm):
 class WhatsAppAbsentForm(forms.Form):
     date = forms.DateField(
         label='تاريخ الغياب',
-        initial=timezone.now().date(),
+        initial=timezone.localdate,          # دالة: تُحسب عند كل عرض (لا عند إقلاع الخادم)
         widget=forms.DateInput(attrs={'type': 'date'})
     )
     circle = forms.ModelChoiceField(
@@ -150,7 +150,7 @@ class ViewerAccountForm(forms.Form):
     """إنشاء حساب «مشاهد» يرى الإحصائيات والسبر فقط."""
     username = forms.CharField(label='اسم المستخدم', max_length=150,
                                widget=forms.TextInput(attrs={'placeholder': 'مثال: mushrif1', 'autocomplete': 'off'}))
-    password = forms.CharField(label='كلمة المرور', min_length=6,
+    password = forms.CharField(label='كلمة المرور', min_length=8,
                                widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}))
 
     def clean_username(self):
@@ -159,3 +159,16 @@ class ViewerAccountForm(forms.Form):
         if get_user_model().objects.filter(username=name).exists():
             raise forms.ValidationError('اسم المستخدم مستخدم مسبقاً.')
         return name
+
+    def clean(self):
+        """يطبّق AUTH_PASSWORD_VALIDATORS (الطول، الشائعة، الأرقام فقط، التشابه مع الاسم)."""
+        cleaned = super().clean()
+        password = cleaned.get('password')
+        if password:
+            from django.contrib.auth import get_user_model, password_validation
+            user = get_user_model()(username=cleaned.get('username') or '')
+            try:
+                password_validation.validate_password(password, user=user)
+            except forms.ValidationError as exc:
+                self.add_error('password', exc)
+        return cleaned

@@ -1,3 +1,5 @@
+import datetime
+
 from django.db import models
 from django.utils import timezone
 
@@ -66,7 +68,7 @@ class Circle(models.Model):
 
     def attendance_rate(self, days=30):
         """نسبة الحضور خلال آخر عدد أيام محدد (احتساب: (حاضر+تأخر) / (حاضر+تأخر+غائب))"""
-        since = timezone.now().date() - timezone.timedelta(days=days)
+        since = timezone.localdate() - datetime.timedelta(days=days)
         qs = Attendance.objects.filter(circle=self, date__gte=since)
         total = qs.exclude(status='excused').count()
         if total == 0:
@@ -147,7 +149,7 @@ class Student(models.Model):
         return last.date if last else None
 
     def attendance_rate(self, days=90):
-        since = timezone.now().date() - timezone.timedelta(days=days)
+        since = timezone.localdate() - datetime.timedelta(days=days)
         qs = Attendance.objects.filter(student=self, date__gte=since)
         total = qs.exclude(status='excused').count()
         if total == 0:
@@ -157,8 +159,8 @@ class Student(models.Model):
 
     def absence_count(self, days, before_date=None):
         """عدد أيام الغياب خلال آخر (days) يوماً، محسوبة قبل تاريخ محدد (افتراضياً اليوم)."""
-        before_date = before_date or timezone.now().date()
-        since = before_date - timezone.timedelta(days=days - 1)
+        before_date = before_date or timezone.localdate()
+        since = before_date - datetime.timedelta(days=days - 1)
         return Attendance.objects.filter(
             student=self, status='absent', date__gte=since, date__lte=before_date,
         ).count()
@@ -252,7 +254,7 @@ class Course(models.Model):
         return self.students.count()
 
     def attendance_rate(self, days=30):
-        since = timezone.now().date() - timezone.timedelta(days=days)
+        since = timezone.localdate() - datetime.timedelta(days=days)
         qs = CourseAttendance.objects.filter(course=self, date__gte=since)
         total = qs.exclude(status='excused').count()
         if total == 0:
@@ -592,11 +594,7 @@ class AISettings(models.Model):
         return {
             'has_key': bool(key),
             'key_hint': (key[:4] + '…' + key[-4:]) if len(key) > 12 else ('••••' if key else ''),
-            'key_env': ('GEMINI_API_KEY' if os.environ.get('GEMINI_API_KEY')
-                        else 'GOOGLE_API_KEY' if os.environ.get('GOOGLE_API_KEY')
-                        else 'AI_API_KEY' if os.environ.get('AI_API_KEY')
-                        else 'ANTHROPIC_API_KEY' if os.environ.get('ANTHROPIC_API_KEY')
-                        else 'OPENAI_API_KEY' if os.environ.get('OPENAI_API_KEY') else ''),
+            'key_env': getattr(settings, 'AI_API_KEY_ENV', '') if key else '',   # المتغيّر الذي اعتُمد فعلاً
             'base_url': getattr(settings, 'AI_BASE_URL', '') or 'https://generativelanguage.googleapis.com/v1beta',
             'base_url_env': 'AI_BASE_URL' if os.environ.get('AI_BASE_URL') else '(افتراضي: Gemini)',
             'model': getattr(settings, 'AI_MODEL', '') or 'gemini-2.5-flash',

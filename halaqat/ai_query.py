@@ -137,7 +137,7 @@ def _int_or_none(v, lo, hi):
         if v is None or str(v).strip() == '':
             return None
         n = int(float(v))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):      # OverflowError: «1e999» أو Infinity أو عدد ضخم
         return None
     return n if lo <= n <= hi else None
 
@@ -204,7 +204,7 @@ def validate_spec(raw, circles, today):
             continue
         try:
             value = float(c.get('value'))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):  # عدد صحيح ضخم جداً يرفع OverflowError
             continue
         if metric not in allowed or op not in OPS or not math.isfinite(value) or abs(value) > 1e9:
             warns.append('تم تجاهل شرط غير صالح')
@@ -867,7 +867,7 @@ def ask_llm(question, today, circle_names, api_key, model, http=None, timeout=30
                     continue
                 tried.append(alt)
                 alt_url = _endpoint(base_url, kind, alt)
-                alt_body = dict(body, model=alt)
+                alt_body = body          # جسم Gemini لا يحوي اسم النموذج (يُمرَّر في المسار فقط)
                 logger.warning('النموذج %s غير متاح — تجربة %s', model, alt)
                 resp = http.post(alt_url, timeout=timeout, headers=headers, json=alt_body)
                 if getattr(resp, 'status_code', 0) != 404:

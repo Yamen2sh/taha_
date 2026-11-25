@@ -28,7 +28,7 @@ from .models import (
     AISettings,
 )
 from .forms import CircleForm, StudentForm, CourseForm, WhatsAppAbsentForm, ViewerAccountForm
-from .roles import VIEWER_GROUP, is_viewer
+from .roles import VIEWER_GROUP, is_viewer, superuser_required
 from .telegram_utils import (send_telegram_message, send_telegram_document_bytes,
                              queue_telegram_line)
 from .whatsapp_utils import normalize_chat_id, send_whatsapp_text
@@ -154,7 +154,7 @@ def _circles_overview():
     """
     from collections import Counter
     circles = cache_utils.circles()
-    today = timezone.now().date()
+    today = timezone.localdate()
 
     by_circle = {}
     for row in (Attendance.objects.filter(date=today)
@@ -261,9 +261,9 @@ def circle_detail(request, circle_id):
         try:
             selected_date = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
         except ValueError:
-            selected_date = timezone.now().date()
+            selected_date = timezone.localdate()
     else:
-        selected_date = timezone.now().date()
+        selected_date = timezone.localdate()
 
     # جلب الحالات الحالية لهذا اليوم
     existing = {
@@ -372,7 +372,7 @@ def save_attendance(request, circle_id):
 @login_required
 def courses_list(request):
     courses = Course.objects.prefetch_related('teachers', 'students')
-    today = timezone.now().date()
+    today = timezone.localdate()
 
     course_cards = []
     for course in courses:
@@ -418,9 +418,9 @@ def course_detail(request, course_id):
         try:
             selected_date = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
         except ValueError:
-            selected_date = timezone.now().date()
+            selected_date = timezone.localdate()
     else:
-        selected_date = timezone.now().date()
+        selected_date = timezone.localdate()
 
     existing = {
         a.student_id: a.status
@@ -854,7 +854,7 @@ def _parse_date_param(request, param='date'):
             return datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
         except ValueError:
             pass
-    return timezone.now().date()
+    return timezone.localdate()
 
 
 def _log_admin_action(request, text):
@@ -1367,13 +1367,16 @@ def export_course_attendance_csv(request):
 #  إرسال نسخة احتياطية فورية كاملة إلى تلغرام (Excel)
 # ============================================================
 
-@login_required
+@superuser_required
 def send_all_data_telegram(request):
     """
     يُولِّد ملف Excel متعدد الأوراق يحوي جميع بيانات المسجد
     (أساتذة، حلقات، طلاب، حضور، دورات) ويرسله فوراً إلى تلغرام.
-    محمي بتسجيل الدخول ويسجّل العملية في لوحة التحكم.
+    للمدير العام فقط، ويسجّل العملية في لوحة التحكم.
+    الإرسال إلى تلغرام بطلب POST فقط؛ والتنزيل المباشر ?download=1 (قراءة فقط) يبقى بطلب GET.
     """
+    if request.method != 'POST' and not request.GET.get('download'):
+        return JsonResponse({'ok': False, 'msg': '❌ الإرسال إلى تلغرام يتم بطلب POST من صفحة المطور.'}, status=405)
     try:
         import openpyxl
         from openpyxl.styles import Font, PatternFill, Alignment
@@ -1401,7 +1404,7 @@ def send_all_data_telegram(request):
         ws.sheet_view.rightToLeft = True
 
     wb = openpyxl.Workbook()
-    today = timezone.now().date()
+    today = timezone.localdate()
     today_str = today.isoformat()
 
     # ── ورقة 1: الأساتذة ──────────────────────────────────────
@@ -1651,7 +1654,7 @@ def _reset_pg_sequences():
             """)
 
 
-@login_required
+@superuser_required
 def migrate_sqlite_to_postgres(request):
     """
     GET  → صفحة رفع ملف Excel مع إحصائيات PostgreSQL الحالية.
@@ -1759,7 +1762,7 @@ def migrate_sqlite_to_postgres(request):
 #  صفحة المطور
 # ============================================================
 
-@login_required
+@superuser_required
 def developer_page(request):
     """صفحة المطور: تلغرام، Excel، SQLite، الذكاء الاصطناعي، الكاش."""
     pg_stats = _db_counts()
@@ -1778,7 +1781,7 @@ def developer_page(request):
     })
 
 
-@login_required
+@superuser_required
 @require_POST
 def developer_repair_migrations(request):
     """
@@ -1804,7 +1807,7 @@ def developer_repair_migrations(request):
     return redirect(reverse('developer_page') + '#schema')
 
 
-@login_required
+@superuser_required
 @require_POST
 def developer_run_migrations(request):
     """
@@ -1840,7 +1843,7 @@ def developer_run_migrations(request):
     return redirect(reverse('developer_page') + '#schema')
 
 
-@login_required
+@superuser_required
 def developer_sqlite_export(request):
     """ينزّل ملف SQLite يحوي نسخة كاملة من كل بيانات التطبيق (بمفاتيحها الأصلية)."""
     from . import sqlite_transfer
@@ -1861,7 +1864,7 @@ def developer_sqlite_export(request):
     return resp
 
 
-@login_required
+@superuser_required
 @require_POST
 def developer_sqlite_import(request):
     """يستورد ملف SQLite **باستبدال كامل** لكل البيانات (ذرّياً)، ويُبقي إعدادات الذكاء الاصطناعي."""
@@ -1920,7 +1923,7 @@ def developer_sqlite_import(request):
     return redirect(reverse('developer_page') + '#sqlite')
 
 
-@login_required
+@superuser_required
 @require_POST
 def developer_fill_defaults(request):
     """
@@ -1990,7 +1993,7 @@ def developer_fill_defaults(request):
     return redirect(reverse('developer_page') + '#defaults')
 
 
-@login_required
+@superuser_required
 @require_POST
 def developer_ai_save(request):
     """
@@ -2010,7 +2013,7 @@ def developer_ai_save(request):
                          'base_url': env['base_url'], 'prompt_chars': len(cfg.prompt)})
 
 
-@login_required
+@superuser_required
 @require_POST
 def developer_ai_models(request):
     """
@@ -2031,7 +2034,7 @@ def developer_ai_models(request):
                          'base_url': cfg.effective_base_url()})
 
 
-@login_required
+@superuser_required
 @require_POST
 def developer_ai_test(request):
     """اختبار سريع للاتصال: يرسل سؤالاً بسيطاً ويتحقق من إرجاع مواصفة صالحة."""
@@ -2054,7 +2057,7 @@ def developer_ai_test(request):
                          'spec': ai_query.spec_to_json(raw)[:400]})
 
 
-@login_required
+@superuser_required
 @require_POST
 def developer_cache_refresh(request):
     """يمسح كاش الذاكرة ويعيد ملأه فوراً (مفيد بعد تعديل مباشر على قاعدة البيانات من خارج التطبيق)."""
@@ -3394,7 +3397,11 @@ def stats_assistant_page(request):
 
 def _assistant_run_response(request, raw, question, via):
     today = timezone.localdate()
-    spec, warnings = ai_query.validate_spec(raw, cache_utils.circles(), today)
+    try:
+        spec, warnings = ai_query.validate_spec(raw, cache_utils.circles(), today)
+    except Exception:
+        _assistant_log_.exception('تعذّر التحقق من مواصفة المساعد')
+        return JsonResponse({'ok': False, 'error': 'مواصفة غير صالحة'}, status=400)
     try:
         result = ai_query.run_spec(spec)
     except Exception:
@@ -3462,8 +3469,12 @@ def stats_assistant_export(request, fmt):
     data = _assistant_spec_from_post(request)
     if data is None:
         return HttpResponse('مواصفة غير صالحة', status=400)
-    spec, _warnings = ai_query.validate_spec(data, cache_utils.circles(), timezone.localdate())
-    result = ai_query.run_spec(spec)
+    try:
+        spec, _warnings = ai_query.validate_spec(data, cache_utils.circles(), timezone.localdate())
+        result = ai_query.run_spec(spec)
+    except Exception:
+        _assistant_log_.exception('فشل تصدير نتيجة المساعد')
+        return HttpResponse('تعذّر تنفيذ الاستعلام للتصدير', status=500)
     stamp = timezone.localtime().strftime('%Y%m%d_%H%M')
     if fmt == 'xlsx':
         content, ctype = ai_export.build_xlsx(result), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'

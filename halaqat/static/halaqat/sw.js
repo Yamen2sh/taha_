@@ -4,7 +4,7 @@
  *  • ملفات CSS/JS/الخطوط: «الجهاز أولاً» مع تحديث بالخلفية (staleness منخفض).
  * لا يخزّن إلا صفحة HTML ناجحة (200) وبلا بيانات POST.
  */
-const PAGE_CACHE = 'taha-pages-v1';
+const PAGE_CACHE = 'taha-pages-v2';   // رفع الإصدار يمسح النسخ القديمة المحفوظة على كل الأجهزة
 const ASSET_CACHE = 'taha-assets-v1';
 const OFFLINE_HTML = `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -29,7 +29,18 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', event => {
   const req = event.request;
-  if (req.method !== 'GET') return;                       // الحفظ لا يُعترض أبداً (الطابور في offline.js)
+  if (req.method === 'POST') {
+    // تسجيل الخروج/الدخول: امسح الصفحات المحفوظة أولاً كي لا تبقى بيانات الطلاب على جهاز مشترك
+    const u = new URL(req.url);
+    if (u.origin === location.origin && (u.pathname === '/logout/' || u.pathname === '/')) {
+      event.respondWith((async () => {
+        try { await caches.delete(PAGE_CACHE); } catch (e) { /* لا يمنع الخروج */ }
+        return fetch(req);
+      })());
+    }
+    return;                                               // بقية الحفظ لا يُعترض أبداً (الطابور في offline.js)
+  }
+  if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;
 
