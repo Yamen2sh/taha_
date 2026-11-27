@@ -2938,10 +2938,19 @@ def teacher_link_set(request):
 @login_required
 def sort_students_page(request):
     """
-    لوحة الفرز: حاوية كبيرة لكل حلقة + حاوية فارغة مؤقتة (طلاب بلا حلقة فعلية حتى يُسحبوا)،
-    وبطاقات الأساتذة بلون مختلف (كادر بلا حلقة يبقى في الحاوية الفارغة)، وإضافة طالب/أستاذ/حلقة من نفس الصفحة.
+    لوحة الفرز: أربع حلقات في الشبكة + «الحاوية الفارغة» عموداً خامساً بطول الصفحة،
+    وبطاقات الأساتذة (أساسي/بديل) بلون مختلف، وإضافة/حذف من نفس الصفحة.
+
+    • الأستاذ الأساسي **لا يُضاف من هنا**: التعديل هنا «نقل» فقط — تُسحب بطاقة الأستاذ
+      إلى حلقة أخرى، أو إلى الحاوية الفارغة فيصبح بلا حلقة. البديل يُضاف من صفحة
+      «ربط الأساتذة» فقط.
+    • كل بطاقة طالب تحمل نسبة حضوره في آخر شهر داخل دائرة مدرَّجة (أخضر ← أحمر)
+      ووسم آخر سبر.
+    • زر ✕ على كل بطاقة (طالب/أستاذ/حلقة) يضعها في **سلة الحذف** (تصبح شبه شفافة)،
+      ويُثبَّت الحذف فعلياً عند تأكيد «حفظ الحذف» أو مغادرة الصفحة.
     """
-    circles = list(Circle.objects.select_related('teacher').order_by('display_order', 'name', 'id'))
+    circles = list(Circle.objects.select_related('teacher', 'substitute_teacher')
+                   .order_by('display_order', 'name', 'id'))
     from .quran import page_of
     # آخر صفحة مسمّعة لكل طالب (استعلام واحد)
     last = {}
@@ -2952,7 +2961,14 @@ def sort_students_page(request):
         if cur is None or (date, rid) > (cur[0], cur[1]):
             last[sid] = (date, rid, to_page, ts, ta)
 
-    # نسبة الحضور في آخر شهر لكل طالب (استعلام واحد) — لتلوين البطاقات تدريجياً أصفر ← أحمر
+    # آخر سبر لكل طالب (تاريخ + مقتطف من الملاحظات) — استعلام واحد
+    last_sabr = {}
+    for sid, sdate, snores in (Sabr.objects.order_by().values_list('student_id', 'date', 'notes')):
+        cur = last_sabr.get(sid)
+        if cur is None or sdate > cur[0]:
+            last_sabr[sid] = (sdate, (snores or '').strip())
+
+    # نسبة الحضور في آخر شهر لكل طالب (استعلام واحد) — للتدريج اللوني
     from datetime import timedelta
     month_start = timezone.localdate() - timedelta(days=29)
     tally = {}
@@ -2962,22 +2978,50 @@ def sort_students_page(request):
         tally.setdefault(sid, {})[st] = n
 
     def grade_of(sid, joined):
-        """تدرّج اللون حسب حضور آخر شهر + شارة «جديد» للطلاب الجدد أو بلا سجلات."""
+        """تدريج اللون حسب حضور آخر شهر (100% أخضر تام ← 0% أحمر تام) + شارة «جديد»."""
         t = tally.get(sid, {})
         attended = t.get('present', 0) + t.get('late', 0)
         counted = sum(t.values()) - t.get('excused', 0)
-        if joined is not None and (timezone.localdate() - joined).days < 30:
-            return {'grade': 'new', 'rate': None, 'label': 'جديد', 'color': '#7A5AA8'}
+        # بلا أي سجل حضور في آخر شهر → «جديد»؛ وإلا تظهر النسبة دائماً (ولو كان جديداً)
         if counted == 0:
-            return {'grade': 'new', 'rate': None, 'label': 'جديد', 'color': '#7A5AA8'}
+            return {'grade': 'new', 'rate': None, 'label': 'جديد', 'color': '#7A5AA8',
+                    'ring': '#7A5AA8', 'ink': '#4d3471', 'is_new': True}
         rate = round(attended * 100 / counted)
+        if rate >= 90:
+            return {'grade': 'g90', 'rate': rate, 'label': 'ممتاز',
+                    'color': '#2E7D46', 'ring': '#2E7D46', 'ink': '#1f5530'}
+        if rate >= 75:
+            return {'grade': 'g75', 'rate': rate, 'label': 'جيد جداً',
+                    'color': '#4E9B45', 'ring': '#4E9B45', 'ink': '#376e31'}
         if rate >= 60:
-            return {'grade': 'yellow', 'rate': rate, 'label': 'منتظم', 'color': '#E0B33A'}
+            return {'grade': 'g60', 'rate': rate, 'label': 'جيد',
+                    'color': '#8DB33C', 'ring': '#8DB33C', 'ink': '#5f7a26'}
         if rate >= 40:
-            return {'grade': 'orange', 'rate': rate, 'label': 'متوسّط', 'color': '#E08C33'}
-        if rate >= 20:
-            return {'grade': 'deep', 'rate': rate, 'label': 'متعثّر', 'color': '#D2603A'}
-        return {'grade': 'red', 'rate': rate, 'label': 'خطر', 'color': '#C0392B'}
+            return {'grade': 'g40', 'rate': rate, 'label': 'متوسّط',
+                    'color': '#D9A521', 'ring': '#D9A521', 'ink': '#8a6410'}
+        if rate >= 25:
+            return {'grade': 'g25', 'rate': rate, 'label': 'ضعيف',
+                    'color': '#DE7A2A', 'ring': '#DE7A2A', 'ink': '#98521a'}
+        if rate >= 10:
+            return {'grade': 'g10', 'rate': rate, 'label': 'متعثّر',
+                    'color': '#CF4A32', 'ring': '#CF4A32', 'ink': '#8d3020'}
+        return {'grade': 'g0', 'rate': rate, 'label': 'خطر',
+                'color': '#B02A22', 'ring': '#B02A22', 'ink': '#7a1c16'}
+
+    def sabr_of(sid):
+        """وسم آخر سبر: التاريخ + مقتطف قصير من التفاصيل."""
+        rec = last_sabr.get(sid)
+        if not rec:
+            return None
+        sdate, notes = rec
+        snippet = re.sub(r'\s+', ' ', notes)[:46]
+        return {'date': sdate.isoformat(),
+                'days': (timezone.localdate() - sdate).days,
+                'notes': snippet,
+                'count': sabr_counts.get(sid, 0)}
+
+    sabr_counts = dict(Sabr.objects.order_by().values('student_id')
+                       .annotate(n=Count('id')).values_list('student_id', 'n'))
 
     by_circle, parked = {c.id: [] for c in circles}, []
     total = 0
@@ -2988,6 +3032,7 @@ def sort_students_page(request):
                 'last_page': (rec[2] or page_of(rec[3], rec[4])) if rec else None,
                 'birth_year': birth.year if birth else None,
                 'parked': parked_at is not None,
+                'sabr': sabr_of(sid),
                 'grade': grade_of(sid, timezone.localtime(joined).date() if joined else None)}
         total += 1
         if parked_at is not None:
@@ -2995,19 +3040,30 @@ def sort_students_page(request):
         else:
             by_circle.setdefault(cid, []).append(card)
 
+    # بطاقات الأساتذة: من له حلقات/دورات يظهر في حلقه، ومن لا حلقة له يظهر في الحاوية الفارغة
     teacher_cards = list(Teacher.objects.annotate(
         n_circles=Count('circles', distinct=True), n_courses=Count('courses', distinct=True)
     ).order_by('name').values('id', 'name', 'n_circles', 'n_courses'))
     board_teachers = [t for t in teacher_cards if t['n_circles'] or t['n_courses']]
     free_teachers_cards = [t for t in teacher_cards if not t['n_circles'] and not t['n_courses']]
 
+    today = timezone.localdate()
+    boards = []
+    for c in circles:
+        boards.append({
+            'circle': c,
+            'students': by_circle.get(c.id, []),
+            'sub_active': c.is_substituted_on(today),
+        })
+
     return render(request, 'halaqat/sort_students.html', {
-        'boards': [{'circle': c, 'students': by_circle.get(c.id, [])} for c in circles],
+        'boards': boards,
         'parked': parked,
         'teachers': board_teachers,
         'free_teachers': free_teachers_cards,
         'total_students': total,
         'total_parked': len(parked),
+        'today': today,
         'active_nav': 'admin',
     })
 
@@ -3145,6 +3201,110 @@ def sort_students_add(request):
         }})
 
     return JsonResponse({'ok': False, 'error': 'نوع غير معروف'}, status=400)
+
+
+@login_required
+@require_POST
+def sort_students_teacher_move(request):
+    """
+    «تعديل» أستاذ من لوحة الفرز = **نقل** لا إضافة:
+      • circle_id = حلقة  → يصبح أستاذها الأساسي (ويُلغى الربط المؤقت).
+      • circle_id = park  → يبقى بلا حلقة (يُفصل عن حلقته الحالية).
+    إضافة الأستاذ البديل ليست في هذه الصفحة — مكانها صفحة «ربط الأساتذة».
+    """
+    tid = _pk_or_none(request.POST.get('teacher_id'))
+    if tid is None:
+        return JsonResponse({'ok': False, 'error': 'معرّف الأستاذ غير صالح'}, status=400)
+    teacher = get_object_or_404(Teacher, pk=tid)
+    target_raw = (request.POST.get('circle_id') or '').strip()
+    current = list(Circle.objects.filter(teacher=teacher))
+
+    if target_raw in ('park', '0', ''):
+        if current:
+            Circle.objects.filter(teacher=teacher).update(teacher=None)
+            _log_student_move(request, f'{teacher.name}: أُخرج من «{current[0].name}» إلى الحاوية الفارغة')
+        return JsonResponse({'ok': True, 'teacher': {
+            'id': teacher.id, 'name': teacher.name, 'where': 'park',
+            'from': current[0].id if current else None,
+            'cleared': [c.id for c in current],
+        }})
+
+    target_id = _pk_or_none(target_raw)
+    if target_id is None:
+        return JsonResponse({'ok': False, 'error': 'معرّف الحلقة غير صالح'}, status=400)
+    target = get_object_or_404(Circle, pk=target_id)
+    old_teacher = target.teacher
+    # نقل: يُزال من بقية الحلقات ويصبح أستاذ هذه الحلقة (أساسياً)
+    cleared = [c.id for c in current if c.id != target.id]
+    if cleared:
+        Circle.objects.filter(id__in=cleared).update(teacher=None)
+    Circle.objects.filter(pk=target.id).update(
+        teacher=teacher, substitute_teacher=None, substitute_date=None)
+    _log_student_move(request, f'{teacher.name}: أصبح أستاذ «{target.name}»')
+    return JsonResponse({'ok': True, 'teacher': {
+        'id': teacher.id, 'name': teacher.name, 'where': target.id,
+        'from': current[0].id if current else None,
+        'cleared': cleared,
+        'replaced': old_teacher.name if old_teacher and old_teacher.id != teacher.id else None,
+        'replaced_id': old_teacher.id if old_teacher and old_teacher.id != teacher.id else None,
+    }})
+
+
+@login_required
+@require_POST
+def sort_students_delete(request):
+    """
+    تنفيذ حذف **نهائي** لِما وُضع في سلة الحذف (عند تأكيد المستخدم أو مغادرة الصفحة):
+      kind=student + ids=1,2,3
+      kind=teacher + ids=…
+      kind=circle  + ids=…  (يُحذف طلابها معها — CASCADE — ويُعاد عددهم للتأكيد)
+    """
+    kind = request.POST.get('kind')
+    raw = request.POST.get('ids') or ''
+    ids = [int(x) for x in re.findall(r'\d+', raw)]
+    if not ids:
+        return JsonResponse({'ok': False, 'error': 'لا عناصر للحذف'}, status=400)
+
+    if kind == 'student':
+        qs = Student.objects.filter(id__in=ids)
+        names = list(qs.values_list('name', flat=True))[:5]
+        n = qs.delete()[0]
+        _log_admin_action(request, f'🗑 حذف {len(names)}+ طالب من لوحة الفرز: {", ".join(names)}')
+        return JsonResponse({'ok': True, 'deleted': 'student', 'count': n})
+
+    if kind == 'teacher':
+        qs = Teacher.objects.filter(id__in=ids)
+        names = list(qs.values_list('name', flat=True))[:5]
+        Circle.objects.filter(teacher_id__in=ids).update(teacher=None)
+        Circle.objects.filter(substitute_teacher_id__in=ids).update(
+            substitute_teacher=None, substitute_date=None)
+        n = qs.delete()[0]
+        _log_admin_action(request, f'🗑 حذف أستاذ من لوحة الفرز: {", ".join(names)}')
+        return JsonResponse({'ok': True, 'deleted': 'teacher', 'count': n})
+
+    if kind == 'circle':
+        qs = Circle.objects.filter(id__in=ids)
+        names = list(qs.values_list('name', flat=True))[:5]
+        n = qs.delete()[0]
+        _log_admin_action(request, f'🗑 حذف حلقة من لوحة الفرز: {", ".join(names)}')
+        return JsonResponse({'ok': True, 'deleted': 'circle', 'count': n})
+
+    return JsonResponse({'ok': False, 'error': 'نوع غير معروف'}, status=400)
+
+
+@login_required
+@require_POST
+def sort_students_circle_delete_info(request):
+    """تفاصيل تأكيد حذف حلقة: عدد طلابها (سيُحذفون معها)."""
+    cid = _pk_or_none(request.POST.get('circle_id'))
+    if cid is None:
+        return JsonResponse({'ok': False, 'error': 'معرّف غير صالح'}, status=400)
+    circle = get_object_or_404(Circle, pk=cid)
+    return JsonResponse({'ok': True, 'circle': {
+        'id': circle.id, 'name': circle.name,
+        'students': circle.students.count(),
+        'teacher': circle.teacher.name if circle.teacher else '',
+    }})
 
 
 # ============================================================

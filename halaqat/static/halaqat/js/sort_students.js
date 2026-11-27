@@ -17,6 +17,9 @@
   if (!board) return;
   const MOVE_URL = board.dataset.moveUrl;
   const ADD_URL = board.dataset.addUrl;
+  const TCH_MOVE_URL = board.dataset.teacherMoveUrl;
+  const DELETE_URL = board.dataset.deleteUrl;
+  const CIRCLE_INFO_URL = board.dataset.circleInfoUrl;
   const $find = document.getElementById('dn-find');
   const $undo = document.getElementById('dn-undo');
   const $status = document.getElementById('dn-status');
@@ -71,6 +74,8 @@
   /* ───────── تنبيه قبل مغادرة الصفحة إن كانت الحاوية غير فارغة ───────── */
   let leaving = false;
   window.addEventListener('beforeunload', e => {
+    // حذف مؤكَّد عند مغادرة الصفحة (كما طُلب): نستخدم sendBeacon لضمان الإرسال
+    flushBasketOnLeave();
     if (parked > 0 && !leaving) {
       e.preventDefault();
       e.returnValue = 'الحاوية الفارغة ليست فارغة — وزّع الطلاب على الحلقات أولاً.';
@@ -80,12 +85,49 @@
   // التبويبات الداخلية/التنقّل عبر روابط JS: نسأل تأكيداً بدل تحذير المتصفح للروابط الداخلية
   document.addEventListener('click', e => {
     const a = e.target.closest('a[href]');
-    if (!a || parked === 0) return;
+    if (!a) return;
+    if (basket.size > 0) {
+      // مغادرة الصفحة = تأكيد الحذف (بلا سؤال إضافي)، لكن لا نُغادر قبل الإرسال
+      e.preventDefault();
+      flushBasketOnLeave();
+      leaving = true;
+      window.location.href = a.href;
+      return;
+    }
+    if (parked === 0) return;
     if (a.target === '_blank' || a.hasAttribute('download')) return;
     if (!confirm('الحاوية الفارغة ليست فارغة (' + parked + ' طالباً).\nهل تريد المغادرة دون توزيعهم؟')) {
       e.preventDefault();
     } else { leaving = true; }
   }, true);
+
+  /* عند مغادرة الصفحة: يُثبَّت حذف ما في السلة بلا سؤال إضافي.
+     sendBeacon يرسل حتى لو أُغلقت الصفحة، والطلبات تُكرَّر آمنة (الحذف بالمُعرِّف). */
+  function flushBasketOnLeave() {
+    if (basket.size === 0) return;
+    const groups = {};
+    basketList().forEach(i => { (groups[i.kind] = groups[i.kind] || []).push(i.id); });
+    const token = (document.cookie.match(/csrftoken=([^;]+)/) || [])[1] || getCsrf();
+    if (navigator.sendBeacon) {
+      Object.keys(groups).forEach(kind => {
+        const fd = new FormData();
+        fd.append('kind', kind);
+        fd.append('ids', groups[kind].join(','));
+        fd.append('csrfmiddlewaretoken', token);
+        navigator.sendBeacon(DELETE_URL, fd);
+      });
+      basket.clear();
+      return;
+    }
+    Object.keys(groups).forEach(kind => {
+      fetch(DELETE_URL, {
+        method: 'POST', keepalive: true,
+        headers: {'X-CSRFToken': token, 'X-Requested-With': 'XMLHttpRequest'},
+        body: new URLSearchParams({kind, ids: groups[kind].join(',')}).toString(),
+      });
+    });
+    basket.clear();
+  }
 
   /* ───────── التراجع ───────── */
   const undoStack = [];
@@ -224,44 +266,79 @@
     if (!target) return;
     if (d.kind === 'teacher') {
       if (target === d.from) return;
-      linkTeacher(d.card, target);
+      moveTeacher(d.card, target);
     } else if (target !== d.from) {
       doMove(d.card, d.from, target, false);
     }
   }
 
-  /* ───────── ربط أستاذ بحلقة بالسحب (أساسي، أو مؤقت ليوم واحد بالسحب إلى حاوية أخرى) ───────── */
-  async function linkTeacher(tcard, toCol) {
+  /* ───────── نقل الأستاذ بين الحلقات (تعديل، لا إضافة) ─────────
+     هذه الصفحة لا تُضيف أستاذاً أساسياً ولا بديلاً: الإضافة من «ربط الأساتذة» فقط.
+     السحب هنا = نقل: إلى حلقة أخرى (يصبح أستاذها) أو إلى الحاوية الفارغة (بلا حلقة). */
+  async function moveTeacher(tcard, toCol) {
     const tid = tcard.dataset.teacher, tname = tcard.dataset.name;
-    if (isPark(toCol)) { toast('الحاوية الفارغة للطلاب فقط — اسحب الأستاذ إلى حلقة', 'warn'); return; }
-    const cid = toCol.dataset.circle;
-    const fromFree = !!tcard.closest('.dn-park-teachers') || tcard.classList.contains('free');
-    // أستاذ مسحوب من حلقة أخرى: المتصفح يسأل — موافق = ربط دائم، إلغاء = بديل لليوم فقط
-    const temporary = !fromFree && tcard.closest('.dn-col') !== toCol
-      ? !confirm(`ربط «${tname}» بـ ${nameOf(toCol)}؟\n\n«موافق» = ربط دائم (يبقى أستاذاً للحلقة)\n«إلغاء» = أستاذ بديل لهذا اليوم فقط`)
-      : false;
-    const body = {kind: 'link', circle_id: cid, teacher_id: tid};
-    if (temporary) { body.temporary = '1'; body.date = new Date().toISOString().slice(0, 10); }
+    const fromCol = tcard.closest('.dn-col');
+    const toPark = isPark(toCol);
+    if (fromCol === toCol) return;
+    if (toPark) {
+      const ok = confirm(`إخراج «${tname}» من حلقته (${nameOf(fromCol)})؟\n\nسيصبح بلا حلقة ويظهر في «الحاوية الفارغة».` +
+                         `\nلا يُحذف من النظام.`);
+      if (!ok) return;
+    }
+    tcard.classList.add('is-saving');
     try {
-      const data = await post(ADD_URL, body, {label: 'ربط أستاذ'});
-      updateTeacherHeader(toCol, tname);
-      // انقل بطاقة الأستاذ بصرياً إلى الحلقة
-      const head = toCol.querySelector('.dn-head');
-      let card = toCol.querySelector('.dn-teacher-card');
-      if (!card) {
-        card = document.createElement('div');
-        card.className = 'dn-teacher-card';
-        card.innerHTML = '<span class="dn-tgrip" aria-hidden="true">⠿</span><span class="dn-tname"></span><span class="dn-trole">أستاذ الحلقة</span>';
-        head.insertAdjacentElement('afterend', card);
-        card.dataset.teacher = tid; card.dataset.name = tname;
+      const data = await post(TCH_MOVE_URL,
+        {teacher_id: tid, circle_id: toPark ? 'park' : toCol.dataset.circle},
+        {label: 'نقل أستاذ', key: 'tmv:' + tid});
+      // أكّد بصرياً: انقل البطاقة إلى مكانها الجديد
+      const parkBox = document.querySelector('[data-park-teachers]');
+      if (toPark) {
+        tcard.classList.add('free');
+        tcard.querySelector('.dn-trole').textContent = 'بلا حلقة';
+        parkBox.appendChild(tcard);
+        parkBox.querySelector('.dn-tempty')?.setAttribute('hidden', '');
+        // الحلقة القديمة يبقى رأسها بلا أستاذ
+        const oldTitle = fromCol.querySelector('.dn-teacher');
+        if (oldTitle) oldTitle.textContent = 'بلا أستاذ';
+      } else {
+        tcard.classList.remove('free', 'temp');
+        tcard.querySelector('.dn-trole').textContent = 'أستاذ الحلقة';
+        const head = toCol.querySelector('.dn-head');
+        let card = toCol.querySelector('.dn-teacher-card');
+        if (!card) {
+          card = tcard;
+          head.insertAdjacentElement('afterend', card);
+        } else {
+          // الحلقة كان لها أستاذ: بطاقته صارت «بلا حلقة» في الحاوية
+          const displaced = card;
+          card.replaceWith(tcard);
+          displaced.classList.add('free');
+          displaced.querySelector('.dn-trole').textContent = 'بلا حلقة';
+          parkBox.appendChild(displaced);
+          parkBox.querySelector('.dn-tempty')?.setAttribute('hidden', '');
+        }
+        updateTeacherHeader(toCol, tname);
+        // إزالة بطاقة الأستاذ القديم من الحلقات الأخرى التي كان أستاذها لها
+        (data.cleared || []).forEach(cid => {
+          const c = colById(cid);
+          if (!c) return;
+          const t = c.querySelector('.dn-teacher');
+          if (t) t.textContent = 'بلا أستاذ';
+        });
+        if (data.from && data.from !== Number(toCol.dataset.circle)) {
+          const oldCol = colById(data.from);
+          if (oldCol) { const t = oldCol.querySelector('.dn-teacher'); if (t) t.textContent = 'بلا أستاذ'; }
+        }
       }
-      card.dataset.teacher = tid; card.dataset.name = tname;
-      card.querySelector('.dn-tname').textContent = '👨‍🏫 ' + tname;
-      card.classList.remove('free', 'temp');
-      if (temporary) { card.classList.add('temp'); card.querySelector('.dn-trole').textContent = 'بديل اليوم فقط'; }
-      toast(`✅ رُبط «${tname}» بـ ${nameOf(toCol)}${temporary ? ' (مؤقت ليوم واحد)' : ''}`, 'success');
-      setStatus(`🔗 ${tname} ← ${nameOf(toCol)}`);
-    } catch (e) { toast('❌ ' + e.message, 'error'); }
+      tcard.dataset.where = toPark ? 'park' : toCol.dataset.circle;
+      const msg = toPark ? `↩ «${tname}» صار بلا حلقة` : `🔗 «${tname}» ← ${nameOf(toCol)}`;
+      toast('✅ ' + msg, 'success');
+      setStatus(msg);
+    } catch (e) {
+      toast('❌ ' + e.message, 'error');
+    } finally {
+      tcard.classList.remove('is-saving');
+    }
   }
 
   function updateTeacherHeader(col, name) {
@@ -459,6 +536,177 @@
       return n + ' حلقة';
     });
   }
+
+  /* ═════════ سلة الحذف ═════════
+     ضغط ✕ لا يحذف شيئاً: يضع العنصر في السلة (يبدو كأنه محذوف) ويُثبَّت الحذف فعلياً
+     عند «حفظ الحذف نهائياً» أو عند مغادرة الصفحة (كما طلب المستخدم). */
+  const $trash = document.getElementById('dn-trash');
+  const $trashBody = document.getElementById('dn-trash-body');
+  const $trashCount = document.getElementById('dn-trash-count');
+  const $trashFab = document.getElementById('dn-trash-fab');
+  const $trashFabN = document.getElementById('dn-trash-fab-n');
+  // {key: {kind, id, name, el}}
+  const basket = new Map();
+
+  const KIND_LABEL = {student: 'طالب', teacher: 'أستاذ', circle: 'حلقة'};
+
+  function basketList() { return [...basket.values()]; }
+
+  function syncBasket() {
+    const n = basket.size;
+    $trashCount.textContent = n;
+    $trashFabN.textContent = n;
+    $trashFab.hidden = n === 0;
+    if (n === 0) $trash.hidden = true;
+    if (!$find.value.trim()) setStatus(n ? ('🗑 ' + n + ' عنصراً في سلة الحذف') : '');
+    renderBasket();
+  }
+
+  function renderBasket() {
+    $trashBody.innerHTML = '';
+    basketList().forEach(item => {
+      const row = document.createElement('div');
+      row.className = 'dn-trash-item';
+      const kind = document.createElement('span');
+      kind.className = 'kind ' + item.kind;
+      kind.textContent = KIND_LABEL[item.kind] || '';
+      const nm = document.createElement('span');
+      nm.className = 'nm';
+      nm.textContent = item.name;
+      row.appendChild(kind); row.appendChild(nm);
+      if (item.kind === 'circle' && item.students) {
+        const w = document.createElement('span');
+        w.className = 'warn';
+        w.textContent = '⚠ معها ' + item.students + ' طالباً';
+        row.appendChild(w);
+      }
+      const undo = document.createElement('button');
+      undo.type = 'button';
+      undo.className = 'undo-one';
+      undo.textContent = '↩';
+      undo.title = 'استرجاع';
+      undo.addEventListener('click', () => restore(item.key));
+      row.appendChild(undo);
+      $trashBody.appendChild(row);
+    });
+  }
+
+  async function addToBasket(kind, id, name, el) {
+    const key = kind + ':' + id;
+    if (basket.has(key)) return;
+    el.classList.add('dn-trashed');
+    el.dataset.trashKey = key;
+    const item = {key, kind, id, name, el, students: 0};
+    basket.set(key, item);
+    if (kind === 'circle') {
+      // تأكيد صريح: كم طالباً سيُحذف مع الحلقة (يُطلب قبل الحذف النهائي)
+      try {
+        const info = await post(CIRCLE_INFO_URL, {circle_id: id}, {label: 'تفاصيل الحلقة'});
+        item.students = info.circle.students;
+      } catch (e) { /* يبقى 0 */ }
+      // امسح الحلقة بصرياً: بطاقاتها تصبح شبه شفافة
+      el.querySelectorAll('.dn-card, .dn-teacher-card').forEach(c => c.classList.add('dn-trashed'));
+    }
+    syncBasket();
+    toast('🗑 «' + name + '» في سلة الحذف — لم يُحذف بعد', 'warn');
+  }
+
+  function restore(key) {
+    const item = basket.get(key);
+    if (!item) return;
+    basket.delete(key);
+    item.el.classList.remove('dn-trashed');
+    delete item.el.dataset.trashKey;
+    if (item.kind === 'circle') {
+      item.el.querySelectorAll('.dn-trashed').forEach(c => c.classList.remove('dn-trashed'));
+    }
+    syncBasket();
+  }
+
+  function restoreAll() {
+    [...basket.keys()].forEach(restore);
+  }
+
+  async function commitBasket({force} = {}) {
+    if (basket.size === 0) return true;
+    const items = basketList();
+    const circles = items.filter(i => i.kind === 'circle');
+    const withStudents = circles.filter(i => i.students);
+    if (!force) {
+      let msg = 'حذف ' + items.length + ' عنصراً نهائياً؟';
+      if (withStudents.length) {
+        msg += '\n\n⚠ حذف هذه الحلقات يحذف طلابها أيضاً:\n' +
+          withStudents.map(c => '• ' + c.name + ' (' + c.students + ' طالباً)').join('\n');
+      }
+      msg += '\n\nلا يمكن التراجع عن الحذف.';
+      if (!confirm(msg)) return false;
+    }
+    // احذف لكل نوع على حدة
+    const groups = {};
+    items.forEach(i => { (groups[i.kind] = groups[i.kind] || []).push(i.id); });
+    try {
+      for (const kind of Object.keys(groups)) {
+        await post(DELETE_URL, {kind, ids: groups[kind].join(',')}, {label: 'حذف ' + KIND_LABEL[kind]});
+      }
+      // إزالة العناصر من الصفحة نهائياً
+      items.forEach(i => {
+        const col = i.el.closest('.dn-col');
+        i.el.remove();
+        if (col) recount(col);
+      });
+      // إن حُذفت حلقات: أزل أعمدةها، وحرّك طلابها المحذوفين
+      circles.forEach(c => {
+        const col = document.querySelector('.dn-col[data-circle="' + c.id + '"]');
+        if (col) col.remove();
+      });
+      basket.clear();
+      syncBasket();
+      $trash.hidden = true;
+      toast('✅ تم الحذف النهائي', 'success');
+      setStatus('✅ حُذف ' + items.length + ' عنصراً');
+      return true;
+    } catch (e) {
+      toast('❌ ' + e.message, 'error');
+      return false;
+    }
+  }
+
+  // أزرار ✕ داخل اللوحة
+  board.addEventListener('click', e => {
+    const st = e.target.closest('[data-del-student]');
+    const ci = e.target.closest('[data-del-circle]');
+    const out = e.target.closest('[data-out-teacher]');
+    if (st) {
+      const card = st.closest('.dn-card');
+      addToBasket('student', st.dataset.delStudent, card.dataset.name, card);
+    } else if (ci) {
+      const col = ci.closest('.dn-col');
+      addToBasket('circle', ci.dataset.delCircle, ci.dataset.name, col);
+    } else if (out) {
+      // الأستاذ لا يُحذف من هنا: ✕ = إخراجه من الحلقة إلى الحاوية الفارغة (يصبح بلا حلقة)
+      const card = out.closest('.dn-teacher-card');
+      moveTeacher(card, colById('park'));
+    }
+  });
+
+  $trashFab.addEventListener('click', () => { $trash.hidden = !$trash.hidden; });
+  document.getElementById('dn-trash-close').addEventListener('click', () => { $trash.hidden = true; });
+  document.getElementById('dn-trash-restore').addEventListener('click', restoreAll);
+  document.getElementById('dn-trash-exec').addEventListener('click', async () => {
+    const btn = document.getElementById('dn-trash-exec');
+    btn.disabled = true;
+    try { await commitBasket({force: false}); } finally { btn.disabled = false; }
+  });
+
+  /* إظهار/إخفاء وسوم السبر */
+  (function () {
+    const btn = document.getElementById('dn-sabr-toggle');
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      const off = board.classList.toggle('hide-sabr');
+      btn.textContent = off ? '📝 إظهار السبر' : '📝 إخفاء السبر';
+    });
+  })();
 
   /* ───────── بحث (طلاب وأساتذة) ───────── */
   $find.addEventListener('input', () => {

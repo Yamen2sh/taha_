@@ -865,7 +865,11 @@ body.rc-lock{overflow:hidden}
 .dn-bar .btn-secondary:disabled{opacity:.45;cursor:default}
 .dn-status{font-size:12.5px;color:#9c8a71;margin-inline-start:auto}
 .dn-hint{font-size:12.5px;color:#9c8a71;margin-bottom:12px;line-height:1.8}
-.dn-board{display:grid;grid-template-columns:repeat(auto-fill,minmax(236px,1fr));gap:12px;align-items:stretch}
+.dn-board{display:grid;grid-template-columns:minmax(0,1fr) clamp(200px,17.5vw,268px);gap:12px;align-items:start}
+/* أربع حلقات في الصف الأول، وما زاد ينتقل لصف جديد — والحاوية الفارغة عمود بطول الصفحة */
+.dn-cols{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;align-items:stretch;min-width:0}
+@media (max-width:1180px){.dn-cols{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width:860px){.dn-cols{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .dn-col{background:var(--white);border:1.5px solid var(--accent-light);border-radius:16px;box-shadow:var(--shadow);display:flex;flex-direction:column;min-height:200px;transition:border-color .12s,background .12s,box-shadow .12s,opacity .12s}
 .dn-col.is-over{border-color:var(--primary);background:#fff8ee;box-shadow:0 0 0 3px rgba(177,127,74,.28)}
 .dn-col.is-dim{opacity:.45}
@@ -900,7 +904,9 @@ body.dn-dragging{cursor:grabbing;user-select:none;-webkit-user-select:none}
   .dn-pageheader .desc,.dn-hint{display:none}
   .dn-bar{margin-bottom:8px}
   .dn-bar input[type=search],.dn-bar .btn-secondary{padding:6px 10px;font-size:13px}
-  .dn-board{grid-template-columns:repeat(auto-fill,minmax(196px,1fr));gap:8px}
+  .dn-board{grid-template-columns:minmax(0,1fr) 180px;gap:8px}
+  .dn-cols{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+  .dn-park{min-height:0;max-height:calc(100vh - 16px)}
   .dn-col{min-height:140px}
   .dn-list{min-height:80px;padding:6px;gap:5px}
   .dn-card{min-height:38px;font-size:13px}
@@ -986,14 +992,18 @@ body.dn-dragging{cursor:grabbing;user-select:none;-webkit-user-select:none}
 .dn-tname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dn-trole{font-size:10px;font-weight:600;opacity:.75}
 /* الحاوية الفارغة الكبيرة */
-.dn-park{grid-column:1/-1;min-height:170px;border:2px dashed #c8b48e;background:#fdfaf4}
+.dn-park{position:sticky;top:10px;align-self:start;max-height:calc(100vh - 20px);overflow:auto;
+  min-height:calc(100vh - 40px);border:2px dashed #c8b48e;background:#fdfaf4;display:flex;flex-direction:column}
+.dn-park .dn-list{flex:1}
+.dn-park-list{flex-wrap:wrap;flex-direction:row;align-content:flex-start;gap:6px}
+.dn-park-list .dn-card{flex:1 1 100%}
+.dn-park::-webkit-scrollbar{width:7px}
+.dn-park::-webkit-scrollbar-thumb{background:#d9c9a8;border-radius:4px}
 .dn-park.is-over{border-color:var(--primary);background:#fff8ee}
 .dn-park .dn-head{background:linear-gradient(180deg,#f7efdf,#fff);border-radius:14px 14px 0 0}
 .dn-park-teachers{display:flex;flex-wrap:wrap;gap:6px;padding:6px 8px 0}
 .dn-park-teachers .dn-teacher-card{margin:0}
 .dn-tempty{font-size:11.5px;color:#b9a68c;padding:4px 2px}
-.dn-park-list{flex-wrap:wrap;flex-direction:row;align-content:flex-start;gap:6px}
-.dn-park-list .dn-card{flex:0 1 220px}
 .dn-card-park{background:#fff6e6;border-color:#e5cfa6}
 .dn-park-warn{margin:6px 8px 8px;border-radius:9px;padding:6px 10px;font-size:11.5px;font-weight:700;
   background:var(--error-bg);color:#8d3b33;border:1px solid #e6c4c0;text-align:center}
@@ -1194,3 +1204,86 @@ label.shake{animation:shakeX .3s 2}
   .rc-dateform input[type="date"]{flex:1 1 auto;max-width:none}
   .rc-link{margin-inline-start:0;width:100%;text-align:center;box-sizing:border-box}
 }
+
+/* ======================================================
+   لوحة الفرز: دائرة نسبة الحضور المتدرّجة (100% أخضر ← 0% أحمر)
+   اللون يأتي من --ring المحسوب في الخادم، والحلقة تُرسم بنسبة --rate
+   ====================================================== */
+.dn-ring{position:relative;width:34px;height:34px;border-radius:50%;flex-shrink:0;
+  display:inline-flex;align-items:center;justify-content:center;
+  background:conic-gradient(var(--ring) calc(var(--rate) * 1%), #e9e2d5 0);
+  color:var(--ink);font-weight:800;font-size:10.5px;line-height:1;letter-spacing:-.2px}
+.dn-ring::before{content:"";position:absolute;inset:3.5px;border-radius:50%;background:#fff;
+  box-shadow:inset 0 0 0 1px rgba(74,52,32,.07)}
+.dn-ring-txt{position:relative;z-index:1;display:flex;align-items:baseline;gap:0;font-variant-numeric:tabular-nums}
+.dn-ring-txt i{font-style:normal;font-size:8px;font-weight:700;opacity:.8;margin-inline-start:.5px}
+.dn-card-park .dn-ring::before{background:#fffaf0}
+/* شارة «جديد»: دائرة بنفسجية كاملة بدل النسبة */
+.dn-ring[style*="#7A5AA8"]{background:conic-gradient(#7A5AA8 0 360deg)}
+/* «جديد»: نص أطول داخل نفس الدائرة */
+.dn-ring .dn-ring-txt{max-width:100%;overflow:hidden;text-overflow:clip;white-space:nowrap}
+.dn-ring[style*="#7A5AA8"] .dn-ring-txt{font-size:8.5px}
+
+/* وسم السبر جانب الاسم — بنفسجي مميّز، ويُخفى بالكامل مع زر «إظهار السبر» */
+.mini-tag.sabr{background:#f0eaf8;color:#5b3f86;border-color:#d9ccec;cursor:help}
+.mini-tag.sabr.none{background:#f5f2ec;color:#a99a86;border-color:#e6ded0}
+.dn-board.hide-sabr .dn-sabr-tag{display:none}
+
+/* زر ✕ على البطاقات (طالب/أستاذ/حلقة): صغير وهادئ، يصير أحمر عند التحويم */
+.dn-del,.dn-tdel{flex-shrink:0;width:22px;height:22px;border-radius:7px;border:1px solid transparent;
+  background:transparent;color:#c3b39c;font:inherit;font-size:12px;font-weight:800;line-height:1;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0;margin-inline-end:4px;
+  transition:background .1s,color .1s,border-color .1s}
+.dn-del:hover,.dn-tdel:hover{background:var(--error-bg);color:#a8322a;border-color:#e6c4c0}
+.dn-head .dn-del{margin-inline-start:2px}
+.dn-teacher-card .dn-tdel{width:20px;height:20px;margin:0 4px 0 2px}
+.dn-head-txt{min-width:0}
+/* عنصر في سلة الحذف: يبقى ظاهراً لكنه «كأنه محذوف» */
+.dn-card.dn-trashed,.dn-teacher-card.dn-trashed,.dn-col.dn-trashed{
+  opacity:.4;filter:grayscale(.75);border-style:dashed;cursor:default}
+.dn-card.dn-trashed .dn-grip,.dn-teacher-card.dn-trashed .dn-tgrip{visibility:hidden}
+.dn-col.dn-trashed .dn-list,.dn-col.dn-trashed .dn-quickadd{pointer-events:none}
+.dn-col.dn-trashed .dn-title{text-decoration:line-through}
+/* وسم الأستاذ البديل في الحلقة */
+.dn-subtag{display:inline-block;margin-inline-start:5px;font-size:10px;font-weight:700;
+  border-radius:999px;padding:0 6px;background:#fdf3dc;color:#8a6410;border:1px solid #ecd49b}
+.dn-subtag.now{background:#f8e6bd;border-color:var(--warning)}
+
+/* ======================================================
+   سلة الحذف: شريط + زر عائم + سجل العناصر
+   ====================================================== */
+.dn-trash{position:fixed;inset-inline-end:14px;bottom:74px;width:min(360px,calc(100vw - 28px));
+  background:#fff;border:1.5px solid var(--accent-light);border-radius:14px;z-index:9000;
+  box-shadow:0 18px 40px -16px rgba(74,52,32,.5);display:flex;flex-direction:column;overflow:hidden}
+.dn-trash[hidden]{display:none}
+.dn-trash-head{display:flex;align-items:center;gap:8px;padding:9px 11px;background:var(--error-bg);
+  border-bottom:1px solid #e6c4c0;color:#8d3b33}
+.dn-trash-head b{font-size:13px}
+#dn-trash-count{background:#a8322a;color:#fff;border-radius:999px;font-size:11px;font-weight:800;
+  padding:1px 7px;min-width:22px;text-align:center}
+.dn-trash-restore,.dn-trash-exec,.dn-trash-close{border:1px solid var(--accent-light);background:#fff;
+  border-radius:8px;font:inherit;font-size:11.5px;font-weight:700;padding:5px 9px;cursor:pointer;color:var(--ink)}
+.dn-trash-restore{margin-inline-start:auto;color:#2f6b3f;border-color:#bcd9c3;background:var(--success-bg)}
+.dn-trash-exec{background:#a8322a;color:#fff;border-color:#8d3b33}
+.dn-trash-close{padding:3px 8px;line-height:1.4}
+.dn-trash-body{max-height:min(46vh,340px);overflow:auto;padding:6px}
+.dn-trash-item{display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:9px;
+  background:var(--bg);border:1px solid var(--accent-light);margin-bottom:5px;font-size:12.5px;font-weight:700}
+.dn-trash-item .kind{flex-shrink:0;font-size:10px;font-weight:800;border-radius:6px;padding:1px 6px;
+  background:#eee6d8;color:#7a5a2c}
+.dn-trash-item .kind.circle{background:#eef3fa;color:#28506f}
+.dn-trash-item .kind.teacher{background:#f4f0e6;color:#8a6b3f}
+.dn-trash-item .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dn-trash-item .undo-one{border:none;background:transparent;color:var(--primary);font:inherit;
+  font-size:15px;font-weight:800;cursor:pointer;padding:0 4px;line-height:1}
+.dn-trash-item .warn{font-size:10.5px;font-weight:700;color:#8d3b33;background:var(--error-bg);
+  border-radius:6px;padding:1px 6px;white-space:nowrap}
+.dn-trash-note{font-size:10.5px;color:#9c8a71;padding:6px 10px;border-top:1px solid var(--bg-alt);text-align:center}
+.dn-trash-fab{position:fixed;inset-inline-end:14px;bottom:16px;z-index:9001;border:none;cursor:pointer;
+  display:flex;align-items:center;gap:5px;padding:9px 13px;border-radius:999px;
+  background:linear-gradient(135deg,#c0392b,#8d3b33);color:#fff;font:inherit;font-size:13px;font-weight:800;
+  box-shadow:0 10px 24px -10px rgba(140,40,32,.75)}
+.dn-trash-fab[hidden]{display:none}
+.dn-trash-fab span{background:#fff;color:#a8322a;border-radius:999px;font-size:11px;
+  min-width:18px;padding:0 5px;text-align:center}
+.dn-trash-fab:hover{filter:brightness(1.07)}
