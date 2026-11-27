@@ -7,4 +7,5 @@ class HalaqatConfig(AppConfig):
     verbose_name = 'إدارة الحلقات'
 
     def ready(self):
+        from . import checks  # noqa: F401  — فحص صلاحية القوالب عند check/النشر
         from . import signals  # noqa: F401  — يربط إبطال الكاش بتعديلات البيانات
