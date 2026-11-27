@@ -1,7 +1,34 @@
 #!/usr/bin/env bash
 # أمر البناء على Render:  ./build.sh
+# (يمكنك أيضاً استخدام أمرك الخاص، فالأمر migrate نفسه صار يتجاوز
+#  الجداول الموجودة فعلاً تلقائياً — لا حاجة لتعديل إعدادات Render)
 set -o errexit
+
 pip install -r requirements.txt
+
+# ── فحص القوالب قبل النشر ────────────────────────────────────────────────────
+# `manage.py check` لا يفحص صلاحية القوالب، فوسم {% if %} غير مغلق (أو وسم مقطوع
+# عبر سطرين بسبب تنسيق آلي) لا يظهر إلا عند فتح الصفحة في الإنتاج.
+# فحص halaqat.E001 يمنع نشر نسخة معطوبة.
+echo "── فحص القوالب ──"
+if ! python manage.py check --fail-level ERROR; then
+  echo "❌ قالب معطوب — أوقفنا البناء لئلا يُنشر موقع معطّل."
+  echo "   أصلح الرسالة أعلاه ثم أعد النشر."
+  exit 1
+fi
+
 python manage.py collectstatic --noinput
-python manage.py migrate --noinput
+
+# ── الترحيلات ────────────────────────────────────────────────────────────────
+# أمر migrate هنا نسخة ذكية: تتجاوز الترحيلات التي عناصرها موجودة بالفعل
+# (relation "…" already exists) وتُسجّلها بدل أن يُفشل البناء.
+echo "── تشغيل ترحيلات قاعدة البيانات ──"
+if python manage.py migrate --noinput; then
+  echo "✅ المخطط محدَّث"
+else
+  echo "⚠️ تحذير: فشل migrate — سيُعاد المحاولة تلقائياً عند إقلاع التطبيق."
+  echo "   ويمكنك تطبيقه يدوياً من «المطور ← 🗂 الترحيلات»."
+fi
+
 python manage.py createcachetable
+echo "── انتهى البناء ──"

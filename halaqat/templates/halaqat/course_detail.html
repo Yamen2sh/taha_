@@ -98,7 +98,7 @@
       <div class="avatar">{{ row.student.name|first }}</div>
       <div class="name-col">
         <div class="name-line"><a href="{% url 'student_profile' row.student.id %}" class="student-link">{{ row.student.name }}</a><button type="button" class="qs-btn" onclick="openQuickStats({{ row.student.id }})" title="إحصائيات آخر 4 أسابيع">📊</button></div>
-        <div class="absence-stats"><span>{{ row.student.circle.name }}</span></div>
+        <div class="absence-stats"><span>{% if row.student.circle %}{{ row.student.circle.name }}{% else %}بلا حلقة{% endif %}</span></div>
         {% include "halaqat/_history_strip.html" with hist=row.history %}
       </div>
     </div>

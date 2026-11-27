@@ -153,6 +153,8 @@ MIDDLEWARE = [
     'halaqat.roles.ViewerAccessMiddleware',   # حساب «مشاهد»: الإحصائيات والسبر فقط
     'halaqat.cache_utils.WarmupMiddleware',   # احتياط للتحميل المسبق للكاش (انظر cache_utils)
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'halaqat.security.NoStoreMiddleware',            # لا تخزين لصفحات النظام في المتصفح (زر الرجوع بعد الخروج)
+    'halaqat.schema_guard.SchemaErrorMiddleware',    # شبكة أمان: «جدول مفقود» → صفحة عربية + رابط الترحيل
 ]
 
 ROOT_URLCONF = 'masjid_taha.urls'
@@ -169,6 +171,7 @@ TEMPLATES = [
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
                 'halaqat.roles.roles_context',
+                'halaqat.roles.schema_context',
             ],
         },
     },
@@ -199,6 +202,80 @@ STORAGES = {
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# ══════════════════════════════════════════════════════════════
+#  إعدادات الوكيل (Render / معاينة التطوير)
+# ══════════════════════════════════════════════════════════════
+# يخبر Django أن الطلب وصل عبر HTTPS (وكيل) حتى تُبنى الروابط والكوكيز صحيحة
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# عرض الصفحات داخل إطار (iframe): مطلوب لمعاينة التطوير فقط.
+# في الإنتاج (DEBUG=False) يبقى DENY ما لم يُفعّل DJANGO_ALLOW_FRAME صراحةً.
+_ALLOW_FRAME = os.environ.get('DJANGO_ALLOW_FRAME', '').lower() in ('1', 'true', 'yes') or DEBUG
+X_FRAME_OPTIONS = 'SAMEORIGIN' if _ALLOW_FRAME else 'DENY'
+
 LOGIN_URL            = 'login'
 LOGIN_REDIRECT_URL   = 'home'
 LOGOUT_REDIRECT_URL  = 'login'
+
+# ── المساعد الإحصائي: Google Gemini (مفتاح واحد فقط) ──────────────────────
+# المطلوب: مفتاح Gemini فقط من https://aistudio.google.com/apikey
+#   GEMINI_API_KEY  (أو AI_API_KEY / GOOGLE_API_KEY — كلها مقبولة) وبدونها يعمل «تعديل التفسير» اليدوي.
+# النموذج يستقبل السؤال وأسماء الحلقات فقط (لا بيانات طلاب).
+# عنوان الـ API واسم النموذج لهما قيم افتراضية جاهزة — لا تحتاج ضبطهما إلا إن أردت مزوّداً آخر.
+#   AI_BASE_URL (اختياري)  الافتراضي: https://generativelanguage.googleapis.com/v1beta
+#   AI_MODEL    (اختياري)  الافتراضي: gemini-flash-latest (اسم مستعار لأحدث Flash؛ وعند 404 يُجرَّب غيره تلقائياً)
+_AI_BASE_DEFAULT = 'https://generativelanguage.googleapis.com/v1beta'
+_AI_MODEL_DEFAULT = 'gemini-flash-latest'
+
+AI_BASE_URL = os.environ.get('AI_BASE_URL') or _AI_BASE_DEFAULT
+AI_MODEL = os.environ.get('AI_MODEL') or _AI_MODEL_DEFAULT
+
+
+def _pick_ai_key(base_url):
+    """
+    يختار مفتاح الـ API المناسب لمزوّد العنوان الفعلي، فلا يُرسَل مفتاح مزوّد إلى مزوّد آخر
+    (مثلاً OPENAI_API_KEY لا يُرسَل إلى Google). يعيد (المفتاح، اسم المتغيّر المستخدم).
+    """
+    for name in ('GEMINI_API_KEY', 'GOOGLE_API_KEY', 'AI_API_KEY'):      # صريحة: تُستخدم كما هي
+        if os.environ.get(name):
+            return os.environ[name], name
+    host = (base_url or '').lower()
+    if 'anthropic.com' in host:
+        names = ('ANTHROPIC_API_KEY',)
+    elif 'googleapis.com' in host:
+        names = ()                                                       # Gemini يحتاج مفتاح Gemini فقط
+    else:
+        names = ('OPENAI_API_KEY',)                                      # أي واجهة متوافقة مع OpenAI
+    for name in names:
+        if os.environ.get(name):
+            return os.environ[name], name
+    return '', ''
+
+
+AI_API_KEY, AI_API_KEY_ENV = _pick_ai_key(AI_BASE_URL)
+# للتوافق مع الكود القديم
+ANTHROPIC_API_KEY = AI_API_KEY
+ANTHROPIC_MODEL = AI_MODEL
+ASSISTANT_RATE_LIMIT_PER_HOUR = int(os.environ.get('ASSISTANT_RATE_LIMIT_HOUR', os.environ.get('ASSISTANT_RATE_LIMIT_PER_HOUR', '30')))
+
+# ── أمان الجلسة وملفات الكوكيز ────────────────────────────────────────────
+# مدة بقاء تسجيل الدخول (الافتراضي أسبوعان). قلّلها على الأجهزة المشتركة: SESSION_AGE_HOURS=12
+# أو اجعل الجلسة تنتهي بإغلاق المتصفح: SESSION_EXPIRE_AT_BROWSER_CLOSE=true
+SESSION_COOKIE_AGE = int(os.environ.get('SESSION_AGE_HOURS', str(14 * 24))) * 3600
+SESSION_EXPIRE_AT_BROWSER_CLOSE = os.environ.get('SESSION_EXPIRE_AT_BROWSER_CLOSE', 'False').lower() == 'true'
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = 'Lax'
+# في الإنتاج (HTTPS على Render) لا تُرسَل الكوكيز إلا مشفّرة. للتجربة عبر http محلياً: SESSION_COOKIE_SECURE=false
+_COOKIE_SECURE = os.environ.get('SESSION_COOKIE_SECURE', str(not DEBUG)).lower() == 'true'
+SESSION_COOKIE_SECURE = _COOKIE_SECURE
+CSRF_COOKIE_SECURE = _COOKIE_SECURE
+if _COOKIE_SECURE:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')   # Render ينهي TLS عند الوسيط
+
+# كوكيز تعمل داخل إطار المعاينة عبر نطاق مختلف (معاينة فقط: PREVIEW_MODE=1)
+# موضعه هنا في آخر الملف عمداً: لو سبق إعدادات الكوكيز العامة أعلاه لألغت قيمَه (Lax / Secure).
+if os.environ.get('PREVIEW_MODE', '').lower() in ('1', 'true', 'yes'):
+    SESSION_COOKIE_SAMESITE = 'None'
+    CSRF_COOKIE_SAMESITE = 'None'
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True

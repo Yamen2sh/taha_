@@ -1,0 +1,56 @@
+name: قوالب Django
+
+# حاجز قبل الدمج: يمنع وصول قالب معطوب إلى main ومنه إلى الإنتاج.
+# السبب: أداة تنسيق خارجية قسّمت وسوم {% %} و{{ }} على سطرين، فسقطت صفحة
+# /admin-panel/sort-students/ بخطأ TemplateSyntaxError في الإنتاج.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  templates:
+    name: تحميل كل القوالب
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: تثبيت المتطلبات
+        run: pip install -r requirements.txt
+
+      - name: فحص Django (halaqat.E001 يمرّ على كل قالب)
+        env:
+          SECRET_KEY: ci-only-not-a-real-key
+          DEBUG: "True"
+        run: python manage.py check --fail-level ERROR
+
+      - name: تحميل كل قالب صراحةً (تغطية أوسع من halaqat.E001)
+        env:
+          SECRET_KEY: ci-only-not-a-real-key
+          DEBUG: "True"
+        run: |
+          python - <<'PY'
+          import os, pathlib, django
+          os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'masjid_taha.settings')
+          django.setup()
+          from django.template.loader import get_template
+          broken, total = [], 0
+          for p in pathlib.Path('.').rglob('templates/**/*.html'):
+              if '.venv' in p.parts:
+                  continue
+              total += 1
+              name = p.parts[p.parts.index('templates') + 1:]
+              try:
+                  get_template('/'.join(name))
+              except Exception as e:
+                  broken.append((str(p), str(e).splitlines()[0]))
+          for path, err in broken:
+              print(f'::error file={path}::{err}')
+          print(f'قوالب: {total} | معطوبة: {len(broken)}')
+          raise SystemExit(1 if broken else 0)
+          PY

@@ -1,9 +1,13 @@
-<div class="card att-card" data-att-card data-student="{{ student.name }}" data-circle="{{ student.circle.name }}"
-     data-start="{{ month.start|date:'Y-m-d' }}" data-end="{{ month.end|date:'Y-m-d' }}">
+<div class="card att-card" data-att-card data-student="{{ student.name }}" data-circle="{{ student.circle.name|default:'بلا حلقة' }}"
+     data-start="{{ month.start|date:'Y-m-d' }}" data-end="{{ month.end|date:'Y-m-d' }}"
+     data-grade="{{ month.grade.grade }}" data-rate="{{ month.grade.rate|default_if_none:'' }}"
+     data-grade-label="{{ month.grade.label }}">
   <div class="att-head">
-    <h3>الحضور — آخر 4 أسابيع{% if quick %} · {{ student.name }}{% endif %}</h3>
+    <h3>الحضور — آخر 4 أسابيع{% if quick %} · {{ student.name }}{% endif %}
+      <span class="att-grade-badge grade-{{ month.grade.grade }}">{{ month.grade.label }}{% if month.grade.rate is not None %} {{ month.grade.rate }}%{% endif %}</span>
+    </h3>
     <div class="att-tools">
-      <button type="button" class="qs-btn" data-export-image title="حفظ جدول الحضور كصورة PNG">📷 تصدير صورة</button>
+      <button type="button" class="qs-btn" data-export-image title="حفظ أيام الحضور كصورة PNG">📷 تصدير صورة</button>
       <button type="button" class="qs-btn" data-share-image hidden title="مشاركة الصورة (واتساب وغيره)">📤 مشاركة</button>
     </div>
   </div>
@@ -12,18 +16,28 @@
     <span><i class="s-late"></i> تأخر</span>
     <span><i class="s-absent"></i> غياب</span>
     <span><i class="s-excused"></i> إذن</span>
-    <span><i class="s-none"></i> غير مسجّل</span>
   </div>
-  <div class="att-grid">
+
+  {# أيام الحضور الفعلية فقط — لكل يوم اسم اليوم والتاريخ فوقه #}
+  {% if month.cells %}
+  <div class="att-days">
     {% for c in month.cells %}
-    <div class="dc{% if not c.status %} x{% endif %}{% if c.is_today %} today{% endif %}"
-         data-date="{{ c.date|date:'Y-m-d' }}"
-         title="{{ c.date|date:'l j F Y' }}">{{ c.day }}{% if c.status %}<u class="s-{{ c.status }}"></u>{% endif %}</div>
+    <div class="att-day s-{{ c.status }}{% if c.is_today %} today{% endif %}"
+         data-date="{{ c.date|date:'Y-m-d' }}" data-status="{{ c.status }}"
+         data-weekday="{{ c.weekday }}" data-pages="{{ c.pages }}" data-sabr="{{ c.sabr }}"
+         title="{{ c.weekday }} {{ c.date|date:'j F Y' }}{% if c.pages %} · {{ c.pages }} صفحة{% endif %}{% if c.sabr %} · {{ c.sabr }} سبر{% endif %}">
+      <div class="att-day-h"><b>{{ c.weekday }}</b><span>{{ c.date|date:"j/m" }}</span></div>
+      <div class="att-day-b"><u class="s-{{ c.status }}"></u>{% if c.pages %}<em class="pg">📖 {{ c.pages }}</em>{% endif %}{% if c.sabr %}<em class="sb">📝 {{ c.sabr }}</em>{% endif %}</div>
+    </div>
     {% endfor %}
   </div>
+  {% else %}
+  <div class="empty-state" style="padding:16px">لا توجد أيام حضور مسجَّلة في آخر 4 أسابيع.</div>
+  {% endif %}
+
   <div class="att-sum">
     حاضر {{ month.counts.present }} · تأخر {{ month.counts.late }} · غياب {{ month.counts.absent }}
-    · إذن {{ month.counts.excused }} · غير مسجّل {{ month.counts.none }}
-    (من {{ month.total }} يوماً: {{ month.start|date:'Y-m-d' }} ← {{ month.end|date:'Y-m-d' }})
+    · إذن {{ month.counts.excused }}
+    ({{ month.noted }} يوماً مسجَّلاً من آخر {{ month.total }} يوماً: {{ month.start|date:'Y-m-d' }} ← {{ month.end|date:'Y-m-d' }})
   </div>
 </div>

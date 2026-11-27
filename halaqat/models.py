@@ -1,3 +1,5 @@
+import datetime
+
 from django.db import models
 from django.utils import timezone
 
@@ -20,6 +22,15 @@ class Teacher(models.Model):
     def __str__(self):
         return self.name
 
+    @classmethod
+    def get_or_create_by_name(cls, name):
+        """
+        الأستاذ بهذا الاسم (الأقدم إن تكرر) أو ينشئه. الاسم غير فريد في النظام عمداً،
+        فلا نستعمل get_or_create لأنه يرفع MultipleObjectsReturned عند تكرار الاسم.
+        """
+        name = (name or '').strip()[:150]
+        return cls.objects.filter(name=name).order_by('id').first() or cls.objects.create(name=name)
+
 
 class Circle(models.Model):
     """حلقة قرآنية"""
@@ -31,6 +42,13 @@ class Circle(models.Model):
     )
     description = models.CharField('وصف مختصر', max_length=255, blank=True)
     display_order = models.PositiveIntegerField('ترتيب العرض', default=0, help_text='كلما كان الرقم أصغر ظهرت الحلقة أولاً في قائمة الحلقات.')
+    # ربط مؤقت: أستاذ آخر يتولى الحلقة في يوم محدد فقط، ثم ترجع الحلقة لأستاذها الأساسي تلقائياً.
+    substitute_teacher = models.ForeignKey(
+        Teacher, verbose_name='أستاذ بديل (يوم الربط فقط)',
+        on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='substitute_circles',
+    )
+    substitute_date = models.DateField('يوم الربط المؤقت', null=True, blank=True)
     created_at = models.DateTimeField('تاريخ الإنشاء', auto_now_add=True)
 
     class Meta:
@@ -43,11 +61,23 @@ class Circle(models.Model):
 
     @property
     def student_count(self):
-        return self.students.count()
+        return self.students.filter(parked_at__isnull=True).count()
+
+    def teacher_on(self, date):
+        """
+        الأستاذ المسؤول في يوم محدد: البديل إن كان يوم الربط المؤقت مطابقاً،
+        وإلا الأستاذ الأساسي. (الربط المؤقت انتهى بمجرد اختلاف اليوم.)
+        """
+        if self.substitute_teacher_id and self.substitute_date and date and self.substitute_date == date:
+            return self.substitute_teacher
+        return self.teacher
+
+    def is_substituted_on(self, date):
+        return bool(self.substitute_teacher_id and self.substitute_date and date and self.substitute_date == date)
 
     def attendance_rate(self, days=30):
         """نسبة الحضور خلال آخر عدد أيام محدد (احتساب: (حاضر+تأخر) / (حاضر+تأخر+غائب))"""
-        since = timezone.now().date() - timezone.timedelta(days=days)
+        since = timezone.localdate() - datetime.timedelta(days=days)
         qs = Attendance.objects.filter(circle=self, date__gte=since)
         total = qs.exclude(status='excused').count()
         if total == 0:
@@ -66,19 +96,42 @@ class Circle(models.Model):
         return {'total': total, 'recorded': recorded, 'complete': total > 0 and recorded >= total}
 
 
+class StudentQuerySet(models.QuerySet):
+    """استعلامات الطلاب مع تمييز المفصولين عن النشطين."""
+
+    def active(self):
+        """الطلاب النشطون فقط (غير مفصولين) — الافتراضي في لوحات الحضور والتسميع."""
+        return self.filter(withdrawn_at__isnull=True)
+
+    def withdrawn(self):
+        """الطلاب المفصولون فقط — تظهر لإعادتهم عند عودتهم."""
+        return self.filter(withdrawn_at__isnull=False)
+
+
 class Student(models.Model):
-    """طالب داخل حلقة"""
+    """طالب داخل حلقة — سجله لا يُحذف، بل يُفصل ثم يُعاد."""
     name = models.CharField('اسم الطالب', max_length=150)
     phone = models.CharField('رقم الهاتف', max_length=20, blank=True)
     circle = models.ForeignKey(
         Circle, verbose_name='الحلقة',
-        on_delete=models.CASCADE, related_name='students',
+        # SET_NULL (لا CASCADE): حذف حلقة يجب ألّا يمحو سجلات طلابها — يصبحون «بلا حلقة»
+        # فيبقى حضورهم وتسميعهم محفوظاً، ويمكن إعادتهم إلى حلقة لاحقاً.
+        on_delete=models.SET_NULL, null=True, blank=True, related_name='students',
     )
     notes = models.CharField('ملاحظات', max_length=255, blank=True)
     birth_date = models.DateField('تاريخ الميلاد', null=True, blank=True,
                                   help_text='يُستخدم لحساب العمر وفرز الطلاب في الإحصائيات.')
+    # الحاوية المؤقتة في لوحة الفرز: الطالب يبقى في حلقته في قاعدة البيانات لكنه يُخفى
+    # من صفحات الحضور/التسميع حتى يُسحب إلى حلقة أخرى (parked_at = وقت الوضع).
+    parked_at = models.DateTimeField('موضوع في الحاوية المؤقتة', null=True, blank=True)
+    # الفصل: لا يُحذف سجل الطالب أبداً — يُختم بالتاريخ ويختفي من لوحات الحضور والتسميع،
+    # مع بقاء حضوره وتسميعه السابق. «إعادته» = مسح هذا الختم وإسناد حلقة له.
+    withdrawn_at = models.DateTimeField('تاريخ الفصل', null=True, blank=True)
+    withdrawn_reason = models.CharField('سبب الفصل', max_length=200, blank=True)
     joined_at = models.DateTimeField('تاريخ الانضمام', auto_now_add=True)
     updated_at = models.DateTimeField('آخر تعديل', auto_now=True, null=True)
+
+    objects = StudentQuerySet.as_manager()
 
     class Meta:
         verbose_name = 'طالب'
@@ -88,6 +141,22 @@ class Student(models.Model):
     def __str__(self):
         return self.name
 
+    def withdraw(self, reason=''):
+        """فصل الطالب: يبقى السجل والسجلات، ويخرج من الحلقات والحضور."""
+        self.withdrawn_at = timezone.now()
+        self.withdrawn_reason = (reason or '').strip()[:200]
+        self.parked_at = None
+        self.save(update_fields=['withdrawn_at', 'withdrawn_reason', 'parked_at', 'updated_at'])
+
+    def reinstate(self, circle=None):
+        """إعادة طالب مفصول: يُمسح ختم الفصل ويُسند إلى حلقة (اختياري)."""
+        self.withdrawn_at = None
+        self.withdrawn_reason = ''
+        self.parked_at = None
+        if circle is not None:
+            self.circle = circle
+        self.save(update_fields=['withdrawn_at', 'withdrawn_reason', 'parked_at', 'circle', 'updated_at'])
+
     @property
     def age(self):
         """العمر بالسنوات الكاملة (None إن لم يُحدَّد تاريخ الميلاد)."""
@@ -95,8 +164,42 @@ class Student(models.Model):
             return None
         return age_from_birth_date(self.birth_date)
 
+    @property
+    def is_parked(self):
+        """هل الطالب موضوع مؤقتاً في الحاوية الفارغة بلوحة الفرز؟"""
+        return self.parked_at is not None
+
+    @property
+    def is_withdrawn(self):
+        """هل الطالب مفصول (سجله محفوظ، لكنه خارج الحلقات والحضور)؟"""
+        return self.withdrawn_at is not None
+
+    @property
+    def birth_year(self):
+        return self.birth_date.year if self.birth_date else None
+
+    def last_recitation(self):
+        return self.recitations.order_by('-date', '-id').first()
+
+    @property
+    def last_recited_page(self):
+        """رقم آخر صفحة سمّعها الطالب (None إن لم يسمّع بعد) — يظهر كوسم جانب اسمه."""
+        last = self.last_recitation()
+        if not last:
+            return None
+        from .quran import page_of
+        try:
+            return last.to_page or page_of(last.to_surah, last.to_ayah)
+        except Exception:
+            return None
+
+    @property
+    def last_recited_on(self):
+        last = self.last_recitation()
+        return last.date if last else None
+
     def attendance_rate(self, days=90):
-        since = timezone.now().date() - timezone.timedelta(days=days)
+        since = timezone.localdate() - datetime.timedelta(days=days)
         qs = Attendance.objects.filter(student=self, date__gte=since)
         total = qs.exclude(status='excused').count()
         if total == 0:
@@ -106,8 +209,8 @@ class Student(models.Model):
 
     def absence_count(self, days, before_date=None):
         """عدد أيام الغياب خلال آخر (days) يوماً، محسوبة قبل تاريخ محدد (افتراضياً اليوم)."""
-        before_date = before_date or timezone.now().date()
-        since = before_date - timezone.timedelta(days=days - 1)
+        before_date = before_date or timezone.localdate()
+        since = before_date - datetime.timedelta(days=days - 1)
         return Attendance.objects.filter(
             student=self, status='absent', date__gte=since, date__lte=before_date,
         ).count()
@@ -129,7 +232,8 @@ class Attendance(models.Model):
     )
     circle = models.ForeignKey(
         Circle, verbose_name='الحلقة',
-        on_delete=models.CASCADE, related_name='attendance_records',
+        # SET_NULL: حذف الحلقة لا يمحو سجل الحضور — يبقى السجل مربوطاً بالطالب.
+        on_delete=models.SET_NULL, null=True, blank=True, related_name='attendance_records',
     )
     date = models.DateField('التاريخ', default=timezone.now)
     status = models.CharField('الحالة', max_length=10, choices=STATUS_CHOICES, default='present')
@@ -157,7 +261,7 @@ class TeacherAttendance(models.Model):
     )
     circle = models.ForeignKey(
         Circle, verbose_name='الحلقة',
-        on_delete=models.CASCADE, related_name='teacher_attendance_records',
+        on_delete=models.SET_NULL, null=True, blank=True, related_name='teacher_attendance_records',
     )
     date = models.DateField('التاريخ', default=timezone.now)
     status = models.CharField('الحالة', max_length=10, choices=STATUS_CHOICES, default='present')
@@ -201,7 +305,7 @@ class Course(models.Model):
         return self.students.count()
 
     def attendance_rate(self, days=30):
-        since = timezone.now().date() - timezone.timedelta(days=days)
+        since = timezone.localdate() - datetime.timedelta(days=days)
         qs = CourseAttendance.objects.filter(course=self, date__gte=since)
         total = qs.exclude(status='excused').count()
         if total == 0:
@@ -320,8 +424,11 @@ class Sabr(models.Model):
 
 class Recitation(models.Model):
     """
-    تسميع: مقطع من القرآن الكريم سمّعه الطالب في حلقته بتاريخ محدد.
-    النطاق من (سورة، آية) إلى (سورة، آية) — وقد يمتد عبر عدة سور.
+    تسميع: ما سمّعه الطالب من القرآن الكريم بتاريخ محدد.
+
+    طريقتان:
+      • pages — «بالصفحات»: من صفحة … إلى صفحة (افتراضياً صفحة واحدة)، ويُشتق منها نطاق الآيات.
+      • surah — «بأسماء السور» (آخر جزأين: الملك ← الناس): يُختار اسم السورة ثم صفحة/صفحات منها.
     تُحفظ الحلقة وقت التسميع، فلا يتغيّر سجل التسميع القديم إن انتقل الطالب لحلقة أخرى.
     """
 
@@ -336,6 +443,10 @@ class Recitation(models.Model):
         ('acceptable', 'مقبول'),
         ('repeat', 'يحتاج إعادة'),
     ]
+    MODE_CHOICES = [
+        ('pages', 'بالصفحات'),
+        ('surah', 'بأسماء السور'),
+    ]
 
     student = models.ForeignKey(
         Student, verbose_name='الطالب',
@@ -343,14 +454,20 @@ class Recitation(models.Model):
     )
     circle = models.ForeignKey(
         Circle, verbose_name='الحلقة',
-        on_delete=models.CASCADE, related_name='recitations',
+        # SET_NULL: حذف الحلقة لا يمحو سجل التسميع.
+        on_delete=models.SET_NULL, null=True, blank=True, related_name='recitations',
     )
     date = models.DateField('تاريخ التسميع', default=timezone.localdate)
     kind = models.CharField('النوع', max_length=10, choices=KIND_CHOICES, default='new')
-    from_surah = models.PositiveSmallIntegerField('من سورة')
-    from_ayah = models.PositiveSmallIntegerField('من آية')
-    to_surah = models.PositiveSmallIntegerField('إلى سورة')
-    to_ayah = models.PositiveSmallIntegerField('إلى آية')
+    mode = models.CharField('طريقة التسميع', max_length=6, choices=MODE_CHOICES, default='pages')
+    from_page = models.PositiveSmallIntegerField('من صفحة', null=True, blank=True)
+    to_page = models.PositiveSmallIntegerField('إلى صفحة', null=True, blank=True)
+    surah = models.PositiveSmallIntegerField('السورة (وضع السور)', null=True, blank=True)
+    # نطاق الآيات — يُشتق تلقائياً من الصفحات، ويبقى محفوظاً للسجلات القديمة والتصدير
+    from_surah = models.PositiveSmallIntegerField('من سورة', null=True, blank=True)
+    from_ayah = models.PositiveSmallIntegerField('من آية', null=True, blank=True)
+    to_surah = models.PositiveSmallIntegerField('إلى سورة', null=True, blank=True)
+    to_ayah = models.PositiveSmallIntegerField('إلى آية', null=True, blank=True)
     grade = models.CharField('التقدير', max_length=12, choices=GRADE_CHOICES, blank=True, default='')
     notes = models.CharField('ملاحظات', max_length=255, blank=True, default='')
     created_at = models.DateTimeField('وقت التسجيل', auto_now_add=True)
@@ -363,8 +480,54 @@ class Recitation(models.Model):
     def __str__(self):
         return f'{self.student.name} — {self.range_display} — {self.date}'
 
+    # ── اشتقاق نطاق الآيات من الصفحات ──────────────────────────
+    def apply_pages(self):
+        """يحوّل صفحة البداية/النهاية إلى (سورة، آية) حتى تبقى سجلات الآيات متوافقة."""
+        from .quran import page_start, page_end, validate_range
+        if not (self.from_page and self.to_page):
+            return
+        fs, fa = page_start(self.from_page)
+        ts, ta = page_end(self.to_page)
+        if validate_range(fs, fa, ts, ta):
+            return
+        self.from_surah, self.from_ayah, self.to_surah, self.to_ayah = fs, fa, ts, ta
+
+    def save(self, *args, **kwargs):
+        if self.from_page and not self.to_page:
+            self.to_page = self.from_page
+        if self.from_page and self.to_page:
+            if self.to_page < self.from_page:
+                self.from_page, self.to_page = self.to_page, self.from_page
+            self.apply_pages()
+        super().save(*args, **kwargs)
+
+    # ── العرض ──────────────────────────────────────────────────
+    @property
+    def page_span(self):
+        if self.from_page and self.to_page:
+            return self.to_page - self.from_page + 1
+        return 0
+
+    @property
+    def surah_name(self):
+        from .quran import SURAH_NAME
+        n = self.surah or self.from_surah
+        return SURAH_NAME.get(n, '')
+
+    @property
+    def notes_display(self):
+        """الملاحظات للعرض بعد إخفاء بصمة منع التكرار [uid:…]."""
+        import re
+        return re.sub(r'^\[uid:[^\]]*\]\s*', '', self.notes or '')
+
     @property
     def range_display(self):
+        """نص مقروء للمقطع: «صفحة 5» / «صفحة 5–7» / «الملك: الأولى والثانية»."""
+        from .quran import page_range_display, surah_pages_display
+        if self.mode == 'surah' and self.surah and self.from_page:
+            return surah_pages_display(self.surah, self.from_page, self.to_page or self.from_page)
+        if self.from_page and self.to_page:
+            return page_range_display(self.from_page, self.to_page)
         from .quran import format_range
         return format_range(self.from_surah, self.from_ayah, self.to_surah, self.to_ayah)
 
@@ -372,3 +535,131 @@ class Recitation(models.Model):
     def ayah_count(self):
         from .quran import safe_ayah_span
         return safe_ayah_span(self.from_surah, self.from_ayah, self.to_surah, self.to_ayah)
+
+    @property
+    def last_page(self):
+        """رقم آخر صفحة في هذا التسميع (يُستخدم لوسم «آخر صفحة مسمّعة»)."""
+        if self.to_page:
+            return self.to_page
+        from .quran import page_of
+        try:
+            return page_of(self.to_surah, self.to_ayah)
+        except Exception:
+            return None
+
+
+
+class AssistantQuery(models.Model):
+    """سجل أسئلة المساعد الإحصائي: من سأل، وما السؤال، وما المواصفة التي نُفِّذت (للمراجعة وإعادة التشغيل بلا تكلفة)."""
+
+    VIA_CHOICES = [
+        ('ai', 'سؤال بالذكاء الاصطناعي'),
+        ('manual', 'تعديل يدوي'),
+    ]
+
+    user = models.CharField('المستخدم', max_length=150)
+    question = models.CharField('السؤال', max_length=500, blank=True, default='')
+    spec = models.TextField('المواصفة (JSON)', blank=True, default='')
+    via = models.CharField('الطريقة', max_length=10, choices=VIA_CHOICES, default='ai')
+    rows = models.PositiveIntegerField('عدد الصفوف', default=0)
+    ok = models.BooleanField('نجح', default=True)
+    error = models.CharField('الخطأ', max_length=255, blank=True, default='')
+    created_at = models.DateTimeField('الوقت', auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'سؤال للمساعد'
+        verbose_name_plural = 'أسئلة المساعد الإحصائي'
+        ordering = ['-created_at', '-id']
+
+    def __str__(self):
+        return f'{self.user}: {self.question or "(تعديل يدوي)"}'
+
+
+class AISettings(models.Model):
+    """
+    إعدادات المساعد الإحصائي — **البرومت فقط** (صف واحد، يُحرَّر من «المطور ← 🤖 الذكاء الاصطناعي»).
+
+    • prompt: نص البرومت (system prompt) المستخدم فعلياً — يُملأ تلقائياً بالنص الافتراضي
+      المضمّن في ai_query.DEFAULT_SYSTEM_PROMPT أول مرة، ويمكن تعديله من الصفحة.
+
+    ملاحظة أمنية/تشغيلية: **مفتاح الـ API وعنوانه واسم النموذج لا تُحفظ في قاعدة البيانات أبداً**،
+    بل تُقرأ من متغيّرات البيئة فقط. المطلوب عملياً مفتاح واحد فقط:
+      GEMINI_API_KEY (أو AI_API_KEY / GOOGLE_API_KEY) — والعنوان والنموذج لهما قيم Gemini افتراضية.
+    """
+
+    name = models.CharField('الاسم', max_length=20, default='default', unique=True)
+    prompt = models.TextField('البرومت (system prompt)', blank=True, default='')
+    updated_at = models.DateTimeField('آخر تعديل', auto_now=True)
+
+    class Meta:
+        verbose_name = 'إعدادات الذكاء الاصطناعي'
+        verbose_name_plural = 'إعدادات الذكاء الاصطناعي'
+
+    def __str__(self):
+        return 'إعدادات الذكاء الاصطناعي'
+
+    @classmethod
+    def load(cls):
+        """
+        يعيد الصف الوحيد (وينشئه بالبرومت الافتراضي إن لم يكن موجوداً).
+        **لا يرفع استثناءً أبداً**: إن لم يُطبَّق الترحيل بعد (جدول مفقود) أو تعذّر الوصول
+        لقاعدة البيانات، يُعاد كائن غير محفوظ بالبرومت الافتراضي حتى تبقى الصفحات تعمل.
+        """
+        from .ai_query import DEFAULT_SYSTEM_PROMPT
+        try:
+            obj, created = cls.objects.get_or_create(name='default')
+            if created or not obj.prompt:
+                obj.prompt = DEFAULT_SYSTEM_PROMPT
+                obj.save(update_fields=['prompt'])
+            return obj
+        except Exception:                       # noqa: BLE001 — جدول مفقود/قاعدة غير مهيّأة
+            return cls(name='default', prompt=DEFAULT_SYSTEM_PROMPT)
+
+    @classmethod
+    def is_ready(cls):
+        """هل جدول الإعدادات موجود في قاعدة البيانات؟ (لعرض تنبيه الترحيل في صفحة المطور)"""
+        from .schema_guard import _table_exists
+        return _table_exists(cls._meta.db_table)
+
+    # ── القيم الفعّالة: من متغيّرات البيئة فقط (لا قاعدة بيانات) ──
+    @staticmethod
+    def effective_key():
+        from django.conf import settings
+        return getattr(settings, 'AI_API_KEY', '')
+
+    @staticmethod
+    def effective_base_url():
+        from django.conf import settings
+        return getattr(settings, 'AI_BASE_URL', '') or 'https://generativelanguage.googleapis.com/v1beta'
+
+    @staticmethod
+    def effective_model():
+        from django.conf import settings
+        return getattr(settings, 'AI_MODEL', '') or 'gemini-flash-latest'
+
+    @staticmethod
+    def env_status():
+        """حالة متغيّرات البيئة (للعرض في صفحة المطور دون كشف المفتاح)."""
+        import os
+        from django.conf import settings
+        key = getattr(settings, 'AI_API_KEY', '') or ''
+        return {
+            'has_key': bool(key),
+            'key_hint': (key[:4] + '…' + key[-4:]) if len(key) > 12 else ('••••' if key else ''),
+            'key_env': getattr(settings, 'AI_API_KEY_ENV', '') if key else '',   # المتغيّر الذي اعتُمد فعلاً
+            'base_url': getattr(settings, 'AI_BASE_URL', '') or 'https://generativelanguage.googleapis.com/v1beta',
+            'base_url_env': 'AI_BASE_URL' if os.environ.get('AI_BASE_URL') else '(افتراضي: Gemini)',
+            'model': getattr(settings, 'AI_MODEL', '') or 'gemini-flash-latest',
+            'model_env': 'AI_MODEL' if os.environ.get('AI_MODEL') else '(افتراضي: Gemini)',
+        }
+
+    def prompt_for(self, today, circle_names, weekday):
+        """البرومت النهائي بعد تعبئة التاريخ وأسماء الحلقات."""
+        from .ai_query import SYSTEM_PROMPT
+        template = self.prompt or SYSTEM_PROMPT
+        try:
+            return template.format(today=today.isoformat(), weekday=weekday,
+                                   circles='، '.join(circle_names) or '(لا توجد حلقات)')
+        except (KeyError, IndexError, ValueError):
+            # البرومت عُدِّل وفيه أقواس غير متوازنة → نستخدمه كما هو
+            return template

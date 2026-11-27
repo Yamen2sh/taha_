@@ -44,7 +44,7 @@ class CircleForm(forms.ModelForm):
     def save(self, commit=True):
         new_name = self.cleaned_data.get('new_teacher_name')
         if new_name:
-            teacher, _ = Teacher.objects.get_or_create(name=new_name.strip())
+            teacher = Teacher.get_or_create_by_name(new_name)     # الاسم غير فريد: لا نستعمل get_or_create
             self.instance.teacher = teacher
         return super().save(commit=commit)
 
@@ -71,7 +71,7 @@ class StudentForm(forms.ModelForm):
 class WhatsAppAbsentForm(forms.Form):
     date = forms.DateField(
         label='تاريخ الغياب',
-        initial=timezone.now().date(),
+        initial=timezone.localdate,          # دالة: تُحسب عند كل عرض (لا عند إقلاع الخادم)
         widget=forms.DateInput(attrs={'type': 'date'})
     )
     circle = forms.ModelChoiceField(
@@ -93,11 +93,27 @@ class WhatsAppAbsentForm(forms.Form):
         super().__init__(*args, **kwargs)
         self.fields['circle'].queryset = Circle.objects.all()
 
+    # المتغيّرات التي تمرّرها لوحة التحكم إلى str.format عند الإرسال
+    PLACEHOLDERS = ('student_name', 'circle_name', 'date', 'week_absences', 'month_absences')
+
+    def clean_message(self):
+        """يتحقق من نص الرسالة قبل الإرسال: خطأ في الأقواس كان يُسقط خيط الإرسال بصمت بعد رسالة «بدأ الإرسال»."""
+        text = self.cleaned_data['message']
+        try:
+            text.format(student_name='x', circle_name='x', date='2000-01-01', week_absences=0, month_absences=0)
+        except (KeyError, IndexError, ValueError, AttributeError):
+            raise forms.ValidationError(
+                'نص الرسالة يحوي أقواساً { } غير صحيحة. المتغيّرات المسموحة فقط: '
+                + ' '.join('{%s}' % name for name in self.PLACEHOLDERS)
+                + ' — ولكتابة قوس حرفي استعمل {{ أو }}.')
+        return text
+
 
 class StudentMultipleChoiceField(forms.ModelMultipleChoiceField):
     """يعرض اسم الطالب مع اسم حلقته لتسهيل الاختيار من قائمة طويلة"""
     def label_from_instance(self, obj):
-        return f'{obj.name} — {obj.circle.name}'
+        # الحلقة قد تكون فارغة: طالب بلا حلقة (بعد حذف حلقته أو وضعه في الحاوية الفارغة)
+        return f'{obj.name} — {obj.circle.name if obj.circle else "بلا حلقة"}'
 
 
 class CourseForm(forms.ModelForm):
@@ -114,7 +130,7 @@ class CourseForm(forms.ModelForm):
         label='الأساتذة / المحاضرون المسؤولون',
     )
     students = StudentMultipleChoiceField(
-        queryset=Student.objects.select_related('circle').order_by('circle__name', 'name'),
+        queryset=Student.objects.active().select_related('circle').order_by('circle__name', 'name'),
         widget=forms.CheckboxSelectMultiple,
         required=False,
         label='الطلاب المشاركون',
@@ -141,7 +157,7 @@ class CourseForm(forms.ModelForm):
         new_name = self.cleaned_data.get('new_teacher_name')
         course = super().save(commit=commit)
         if new_name:
-            teacher, _ = Teacher.objects.get_or_create(name=new_name.strip())
+            teacher = Teacher.get_or_create_by_name(new_name)
             course.teachers.add(teacher)
         return course
 
@@ -150,7 +166,7 @@ class ViewerAccountForm(forms.Form):
     """إنشاء حساب «مشاهد» يرى الإحصائيات والسبر فقط."""
     username = forms.CharField(label='اسم المستخدم', max_length=150,
                                widget=forms.TextInput(attrs={'placeholder': 'مثال: mushrif1', 'autocomplete': 'off'}))
-    password = forms.CharField(label='كلمة المرور', min_length=6,
+    password = forms.CharField(label='كلمة المرور', min_length=8,
                                widget=forms.PasswordInput(attrs={'autocomplete': 'new-password'}))
 
     def clean_username(self):
@@ -159,3 +175,16 @@ class ViewerAccountForm(forms.Form):
         if get_user_model().objects.filter(username=name).exists():
             raise forms.ValidationError('اسم المستخدم مستخدم مسبقاً.')
         return name
+
+    def clean(self):
+        """يطبّق AUTH_PASSWORD_VALIDATORS (الطول، الشائعة، الأرقام فقط، التشابه مع الاسم)."""
+        cleaned = super().clean()
+        password = cleaned.get('password')
+        if password:
+            from django.contrib.auth import get_user_model, password_validation
+            user = get_user_model()(username=cleaned.get('username') or '')
+            try:
+                password_validation.validate_password(password, user=user)
+            except forms.ValidationError as exc:
+                self.add_error('password', exc)
+        return cleaned

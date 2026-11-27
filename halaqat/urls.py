@@ -3,10 +3,11 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    path('', auth_views.LoginView.as_view(template_name='registration/login.html'), name='login'),
+    path('', auth_views.LoginView.as_view(template_name='registration/login.html', redirect_authenticated_user=True), name='login'),
     path('logout/', auth_views.LogoutView.as_view(), name='logout'),
 
     path('home/', views.home, name='home'),
+    path('sw.js', views.service_worker, name='service_worker'),
     path('help/', views.help_page, name='help_page'),
     path('circles/', views.circles_list, name='circles_list'),
     path('circles/<int:circle_id>/', views.circle_detail, name='circle_detail'),
@@ -59,12 +60,38 @@ urlpatterns = [
     # ── صفحة المطور ──
     path('developer/', views.developer_page, name='developer_page'),
     path('developer/cache/refresh/', views.developer_cache_refresh, name='developer_cache_refresh'),
+    path('developer/ai/save/', views.developer_ai_save, name='developer_ai_save'),
+    path('developer/ai/test/', views.developer_ai_test, name='developer_ai_test'),
+    path('developer/ai/models/', views.developer_ai_models, name='developer_ai_models'),
+    path('developer/sqlite/export/', views.developer_sqlite_export, name='developer_sqlite_export'),
+    path('developer/sqlite/import/', views.developer_sqlite_import, name='developer_sqlite_import'),
+    path('developer/fill-defaults/', views.developer_fill_defaults, name='developer_fill_defaults'),
+    path('developer/migrate/', views.developer_run_migrations, name='developer_run_migrations'),
+    path('developer/migrate/repair/', views.developer_repair_migrations, name='developer_repair_migrations'),
 
     # ── فرز الطلاب بالسحب والإفلات (لوحة التحكم) ──
     path('admin-panel/sort-students/', views.sort_students_page, name='sort_students'),
     path('admin-panel/sort-students/move/', views.sort_students_move, name='sort_students_move'),
+    path('admin-panel/sort-students/add/', views.sort_students_add, name='sort_students_add'),
+    path('admin-panel/sort-students/teacher-move/', views.sort_students_teacher_move, name='sort_students_teacher_move'),
+    path('admin-panel/sort-students/delete/', views.sort_students_delete, name='sort_students_delete'),
+    path('admin-panel/sort-students/circle-info/', views.sort_students_circle_delete_info, name='sort_students_circle_info'),
+
+    # ── المفصولون: سجلات محفوظة يمكن إعادتها إلى حلقة ──
+    path('admin-panel/withdrawn/', views.withdrawn_students_page, name='withdrawn_students'),
+    path('admin-panel/withdrawn/reinstate/', views.withdrawn_student_reinstate, name='withdrawn_student_reinstate'),
+
+    # ── ربط كل أستاذ بحلقته (ويسمح بربط مؤقت ليوم واحد) ──
+    path('admin-panel/teacher-links/', views.teacher_links_page, name='teacher_links'),
+    path('admin-panel/teacher-links/set/', views.teacher_link_set, name='teacher_link_set'),
 
     # ── التسميع (القرآن الكريم) حلقةً حلقة ──
+    # ── المساعد الإحصائي (ذكاء اصطناعي) ──
+    path('stats/assistant/', views.stats_assistant_page, name='stats_assistant'),
+    path('stats/assistant/ask/', views.stats_assistant_ask, name='stats_assistant_ask'),
+    path('stats/assistant/run/', views.stats_assistant_run, name='stats_assistant_run'),
+    path('stats/assistant/export/<str:fmt>/', views.stats_assistant_export, name='stats_assistant_export'),
+
     path('recitation/', views.recitation_page, name='recitation_page'),
     path('recitation/student/<int:student_id>/', views.recitation_student_info, name='recitation_student_info'),
     path('recitation/student/<int:student_id>/add/', views.recitation_add, name='recitation_add'),

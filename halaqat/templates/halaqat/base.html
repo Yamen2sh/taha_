@@ -7,7 +7,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#B17F4A">
   <link rel="icon" href="{% static 'halaqat/images/logo.svg' %}" type="image/svg+xml">
-  <link rel="stylesheet" href="{% static 'halaqat/css/style.css' %}?v=10">
+  <link rel="stylesheet" href="{% static 'halaqat/css/style.css' %}?v=101">
 </head>
 <body>
 <div class="arch-pattern"></div>
@@ -30,7 +30,7 @@
   </nav>
 
   <div class="brand-actions">
-    <form action="{% url 'logout' %}" method="post" style="display:contents" onsubmit="try{localStorage.removeItem('taha_students_index_v1')}catch(e){}">
+    <form action="{% url 'logout' %}" method="post" style="display:contents" onsubmit="try{localStorage.removeItem('taha_students_index_v1')}catch(e){}try{caches.delete('taha-pages-v2')}catch(e){}">
       {% csrf_token %}
       <button type="submit" class="icon-btn" title="تسجيل الخروج">⏻</button>
     </form>
@@ -39,6 +39,12 @@
 {% endif %}
 
 <div class="page-wrap">
+  {% if schema_alert and schema_alert.count and is_superuser %}
+  <div class="schema-alert" role="alert">
+    ⚠️ قاعدة البيانات تحتاج تحديثاً ({{ schema_alert.count }} ترحيلاً غير مطبَّق{% if schema_alert.missing %} · جداول مفقودة: {{ schema_alert.missing|join:", " }}{% endif %}).
+    <a href="{% url 'developer_page' %}#schema">فتح صفحة المطور لتطبيقها ←</a>
+  </div>
+  {% endif %}
   {% if messages %}
     <ul class="messages">
       {% for message in messages %}
@@ -88,7 +94,8 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') toggleDrawer
 <div class="qs-overlay" id="qs-overlay" onclick="if(event.target===this)closeQuickStats()">
   <div class="qs-box"><button class="qs-close" onclick="closeQuickStats()">✕</button><div id="qs-body"></div></div>
 </div>
-{% if user.is_authenticated %}<script src="{% static 'halaqat/js/student_index.js' %}?v=1"></script>
+{% if user.is_authenticated %}<script src="{% static 'halaqat/js/student_index.js' %}?v=2"></script>
+<script src="{% static 'halaqat/js/offline.js' %}?v=2"></script>
 <script src="{% static 'halaqat/js/ui.js' %}?v=2" defer></script>
 <script src="{% static 'halaqat/js/export_image.js' %}?v=1" defer></script>{% endif %}
 <script>
@@ -104,7 +111,7 @@ function closeQuickStats(){document.getElementById('qs-overlay').classList.remov
 function addHijriTitles(root){
   try{
     const f=new Intl.DateTimeFormat('ar-SA-u-ca-islamic-umalqura',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
-    (root||document).querySelectorAll('.att-grid .dc[data-date]').forEach(el=>{
+    (root||document).querySelectorAll('.att-day[data-date], .att-grid .dc[data-date]').forEach(el=>{
       const d=new Date(el.dataset.date+'T12:00:00'); el.title=f.format(d)+' — '+el.dataset.date;
     });
   }catch(e){}

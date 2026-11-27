@@ -33,7 +33,7 @@ STATS_TTL = 15 * 60
 _KEY_CIRCLES = 'ref:circles'
 _KEY_STUDENTS = 'ref:students_index'
 _KEY_FREE_TEACHERS = 'ref:free_teachers'
-_REF_KEYS = (_KEY_CIRCLES, _KEY_STUDENTS, _KEY_FREE_TEACHERS)
+_REF_KEYS = (_KEY_CIRCLES, _KEY_STUDENTS, _KEY_FREE_TEACHERS, 'ref:students_search')
 
 _MISSING = object()
 _lock = threading.Lock()
@@ -65,13 +65,16 @@ def _ref(key, builder, ttl=REF_TTL):
 
 
 def _build_circles():
-    from django.db.models import Count
+    from django.db.models import Count, Q
     from .models import Circle
-    qs = (Circle.objects.select_related('teacher').annotate(n=Count('students'))
+    qs = (Circle.objects.select_related('teacher', 'substitute_teacher')
+          .annotate(n=Count('students', filter=Q(students__parked_at__isnull=True)))
           .order_by('display_order', 'name', 'id'))
     return [{
         'id': c.id, 'name': c.name, 'description': c.description, 'display_order': c.display_order,
         'teacher': {'id': c.teacher_id, 'name': c.teacher.name} if c.teacher_id else None,
+        'substitute': ({'id': c.substitute_teacher_id, 'name': c.substitute_teacher.name,
+                        'date': c.substitute_date.isoformat()} if c.substitute_teacher_id else None),
         'students': c.n,
     } for c in qs]
 
@@ -83,7 +86,7 @@ def circles():
 
 def _build_students_index():
     from .models import Student
-    rows = list(Student.objects.select_related('circle').order_by('name')
+    rows = list(Student.objects.active().select_related('circle').order_by('name')
                 .values_list('id', 'name', 'circle_id', 'circle__name'))
     payload = json.dumps(rows, ensure_ascii=False, separators=(',', ':'))
     return {'v': hashlib.sha1(payload.encode('utf-8')).hexdigest()[:16], 'payload': payload, 'rows': rows}
@@ -92,6 +95,36 @@ def _build_students_index():
 def students_index():
     """{'v': نسخة, 'payload': JSON جاهز, 'rows': [(id, اسم, id الحلقة, اسم الحلقة)]}."""
     return _ref(_KEY_STUDENTS, _build_students_index)
+
+
+def students_search_rows():
+    """
+    صفوف البحث المحلي: (id, اسم, id الحلقة, اسم الحلقة, آخر صفحة مسمّعة, تاريخ الميلاد, تاريخ آخر تسميع).
+    استعلام واحد يُخزَّن في الذاكرة ويُبطَل عند أي تعديل على الطلاب أو التسميع.
+    """
+    def build():
+        from .models import Student
+        last = {}
+        for sid, rid, date, to_page, ts, ta in (Student.objects.active().filter(recitations__isnull=False)
+                .order_by()
+                .values_list('id', 'recitations__id', 'recitations__date',
+                             'recitations__to_page', 'recitations__to_surah', 'recitations__to_ayah')):
+            cur = last.get(sid)
+            if cur is None or (date, rid) > (cur[0], cur[1]):
+                last[sid] = (date, rid, to_page, ts, ta)
+        from .quran import page_of
+        rows = []
+        qs = (Student.objects.active().select_related('circle').order_by('name')
+              .values_list('id', 'name', 'circle_id', 'circle__name', 'birth_date'))
+        for sid, name, cid, cname, birth in qs:
+            rec = last.get(sid)
+            page = None
+            if rec:
+                page = rec[2] or page_of(rec[3], rec[4])
+            rows.append((sid, name, cid, cname, page, birth.isoformat() if birth else None,
+                         rec[0].isoformat() if rec else None))
+        return rows
+    return _ref('ref:students_search', build)
 
 
 def _build_free_teachers():
@@ -205,6 +238,22 @@ def warm_cache_async(delay=1.5):
 
     threading.Thread(target=_run, name='taha-cache-warm', daemon=True).start()
     return True
+
+
+def rate_limit(key, limit, window=3600):
+    """عدّاد بسيط في ذاكرة العملية: يعيد True إن كان الطلب مسموحاً (ويزيد العدّاد)، False إن بلغ الحد خلال النافذة."""
+    mem = _mem()
+    now = time.time()
+    with _lock:
+        entry = mem.get(key, None)
+        if entry is None or entry[1] <= now:
+            mem.set(key, (1, now + window), window)
+            return True
+        count, reset = entry
+        if count >= limit:
+            return False
+        mem.set(key, (count + 1, reset), max(1, int(reset - now)))
+        return True
 
 
 def status():

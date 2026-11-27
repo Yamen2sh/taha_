@@ -46,6 +46,15 @@ def _clean(val):
     return '' if s in ('—', 'None', '') else s
 
 
+# حدود الأطوال تطابق max_length في models.py. PostgreSQL يرفض ما يزيد عنها بينما SQLite يتسامح،
+# لذلك نقتطع عند القراءة (للإنشاء ولمفاتيح المطابقة معاً) كي لا تُفشل خلية واحدة الاستيراد كله.
+NAME_MAX, PHONE_MAX, TEXT_MAX = 150, 20, 255
+
+
+def _name(val):
+    return _clean(val)[:NAME_MAX]
+
+
 def _cell(row, i):
     return row[i] if row is not None and len(row) > i else None
 
@@ -143,10 +152,10 @@ def import_workbook(wb, mode='merge'):
         t_by_x = {}                            # معرّف التصدير → Teacher
         added = 0
         for row in sheet('الأساتذة'):
-            name = _clean(_cell(row, 1))
+            name = _name(_cell(row, 1))
             if not name:
                 continue
-            xid, phone = _xid(row, 3), _clean(_cell(row, 2))
+            xid, phone = _xid(row, 3), _clean(_cell(row, 2))[:PHONE_MAX]
             t = existing_match(Teacher, xid, name=name)
             if t is None and not (replace and xid is not None):
                 t = teachers.get(name)
@@ -164,7 +173,7 @@ def import_workbook(wb, mode='merge'):
         def teacher_ref(xid=None, name=None):
             if xid is not None and xid in t_by_x:
                 return t_by_x[xid]
-            name = _clean(name)
+            name = _name(name)
             if not name:
                 return None
             if name not in teachers:
@@ -178,7 +187,7 @@ def import_workbook(wb, mode='merge'):
         c_by_x = {}
         added = 0
         for row in sheet('الحلقات'):
-            name = _clean(_cell(row, 1))
+            name = _name(_cell(row, 1))
             if not name:
                 continue
             xid = _xid(row, 6)
@@ -192,7 +201,7 @@ def import_workbook(wb, mode='merge'):
                 except (TypeError, ValueError):
                     order = 0
                 c = Circle.objects.create(name=name, teacher=teacher,
-                                          description=_clean(_cell(row, 4)), display_order=order)
+                                          description=_clean(_cell(row, 4))[:TEXT_MAX], display_order=order)
                 circles.setdefault(name, c)
                 added += 1
             elif c.teacher_id is None and teacher:
@@ -205,7 +214,7 @@ def import_workbook(wb, mode='merge'):
         def circle_ref(xid=None, name=None, create=False):
             if xid is not None and xid in c_by_x:
                 return c_by_x[xid]
-            name = _clean(name)
+            name = _name(name)
             if not name:
                 return None
             if name not in circles and create:
@@ -221,12 +230,12 @@ def import_workbook(wb, mode='merge'):
         s_by_x = {}
         added = 0
         for row in sheet('الطلاب'):
-            name = _clean(_cell(row, 1))
+            name = _name(_cell(row, 1))
             circle = circle_ref(_xid(row, 8), _cell(row, 2), create=True)
             if not name or not circle:
                 continue
             xid = _xid(row, 7)
-            phone, notes = _clean(_cell(row, 3)), _clean(_cell(row, 4))
+            phone, notes = _clean(_cell(row, 3))[:PHONE_MAX], _clean(_cell(row, 4))[:TEXT_MAX]
             birth = _parse_date(_cell(row, 6))
             s = existing_match(Student, xid, name=name)
             if s is None and not (replace and xid is not None):
@@ -254,7 +263,7 @@ def import_workbook(wb, mode='merge'):
         def student_ref(xid=None, name=None, circle=None):
             if xid is not None and xid in s_by_x:
                 return s_by_x[xid]
-            name = _clean(name)
+            name = _name(name)
             if not name:
                 return None
             if circle is not None and (name, circle.id) in students:
@@ -295,9 +304,16 @@ def import_workbook(wb, mode='merge'):
             if key in rec_existing:
                 continue
             rec_existing.add(key)
+            # أعمدة الصفحات (O و P) — تُستخدم إن وُجدت لاستيراد التسميع بالصفحات كما هو
+            from_page = _xid(row, 14) or quran.page_of(from_surah, from_ayah)
+            to_page = _xid(row, 15) or quran.page_of(to_surah, to_ayah)
+            surah_mode = surah_no.get(_clean(_cell(row, 16))) if _clean(_cell(row, 16)) else None
             rec_objs.append(Recitation(
                 student=s, circle=circle or s.circle, date=d,
                 kind=kind_map.get(_clean(_cell(row, 3)), 'new'),
+                mode='surah' if surah_mode else 'pages',
+                surah=surah_mode,
+                from_page=from_page, to_page=to_page,
                 from_surah=from_surah, from_ayah=from_ayah, to_surah=to_surah, to_ayah=to_ayah,
                 grade=grade_map.get(_clean(_cell(row, 8)), ''), notes=_clean(_cell(row, 9))[:255]))
         Recitation.objects.bulk_create(rec_objs, batch_size=500)
@@ -336,7 +352,7 @@ def import_workbook(wb, mode='merge'):
         k_by_x = {}
         added = 0
         for row in sheet('الدورات'):
-            name = _clean(_cell(row, 1))
+            name = _name(_cell(row, 1))
             if not name:
                 continue
             xid = _xid(row, 5)
@@ -344,7 +360,7 @@ def import_workbook(wb, mode='merge'):
             if c is None and not (replace and xid is not None):
                 c = courses.get(name)
             if c is None:
-                c = Course.objects.create(name=name, description=_clean(_cell(row, 4)))
+                c = Course.objects.create(name=name, description=_clean(_cell(row, 4))[:TEXT_MAX])
                 courses.setdefault(name, c)
                 added += 1
             if xid is not None:
@@ -365,7 +381,7 @@ def import_workbook(wb, mode='merge'):
         def course_ref(xid=None, name=None):
             if xid is not None and xid in k_by_x:
                 return k_by_x[xid]
-            return courses.get(_clean(name))
+            return courses.get(_name(name))
 
         # ════════ حضور الدورات ════════
         ca_existing = set(CourseAttendance.objects.values_list('student_id', 'course_id', 'date'))

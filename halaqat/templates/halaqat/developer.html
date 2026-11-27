@@ -33,6 +33,178 @@
   {% include "halaqat/_import_block.html" %}
 </section>
 
+
+<section class="subpane" data-tab="ai" data-title="🤖 الذكاء الاصطناعي">
+  <div class="panel" style="border-right:4px solid #7A5AA8;">
+    <div style="font-weight:700; font-size:15px; margin-bottom:6px;">🤖 المساعد الإحصائي — Google Gemini</div>
+    <div style="font-size:12px; color:#9c8a71; margin-bottom:16px; line-height:1.7;">
+      <b>المطلوب مفتاح واحد فقط:</b> مفتاح Gemini من
+      <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:#7A5AA8;font-weight:700">aistudio.google.com/apikey</a>
+      ← يُضاف كمتغيّر بيئة <code dir="ltr">GEMINI_API_KEY</code> ويعمل فوراً.
+      العنوان والنموذج لهما قيم افتراضية (<code dir="ltr">gemini-flash-latest</code>) فلا تحتاج ضبطهما.
+      <br>(يبقى يعمل أيضاً مع أي مزوّد آخر يدعم فتح الدوال: Anthropic · OpenAI · OpenRouter · Groq · Ollama…)
+    </div>
+
+    {# ── إعدادات الاتصال: متغيّرات بيئة فقط (للقراءة) ── #}
+    <div style="background:#f6f7f9;border:1px solid #dde1e7;border-radius:10px;padding:13px;margin-bottom:16px">
+      <div style="font-weight:700;font-size:13px;margin-bottom:9px;color:#3d4a5c">
+        🔒 مفتاح Gemini يُضاف كمتغيّر بيئة فقط (لا يُحفظ في قاعدة البيانات ولا يُعدَّل من هنا)
+      </div>
+      <table style="width:100%;font-size:12px;line-height:2;border-collapse:collapse">
+        <tr>
+          <td style="padding:2px 0;color:#6b7787;white-space:nowrap;width:1%">المفتاح</td>
+          <td style="padding:2px 8px">
+            {% if ai_env.has_key %}
+              <b style="color:#2d9e5f">✅ مضبوط</b>
+              <code dir="ltr" style="font-size:11px;background:#fff;border:1px solid #e3e7ec;border-radius:5px;padding:1px 5px">{{ ai_env.key_hint }}</code>
+            {% else %}
+              <b style="color:#c0392b">⚠️ غير مضبوط</b>
+            {% endif %}
+            <code dir="ltr" style="font-size:11px;color:#8a94a2">{{ ai_env.key_env|default:"GEMINI_API_KEY" }}</code>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:2px 0;color:#6b7787;white-space:nowrap">عنوان الـ API</td>
+          <td style="padding:2px 8px"><code dir="ltr" style="font-size:11.5px">{{ ai_env.base_url }}</code>
+            <span style="color:#a0a8b4;font-size:11px">← {{ ai_env.base_url_env }}</span></td>
+        </tr>
+        <tr>
+          <td style="padding:2px 0;color:#6b7787;white-space:nowrap">النموذج</td>
+          <td style="padding:2px 8px"><code dir="ltr" style="font-size:11.5px">{{ ai_env.model }}</code>
+            <span style="color:#a0a8b4;font-size:11px">← {{ ai_env.model_env }}</span></td>
+        </tr>
+      </table>
+      <div style="font-size:11px;color:#8a94a2;line-height:1.9;margin-top:9px;border-top:1px solid #e6eaef;padding-top:8px">
+        على الخادم أضِف متغيّراً واحداً فقط ثم أعد التشغيل:<br>
+        <code dir="ltr" style="font-size:11.5px;font-weight:700;color:#3d4a5c">GEMINI_API_KEY=···</code><br>
+        (مقبول أيضاً <code dir="ltr" style="font-size:11px">AI_API_KEY</code> أو <code dir="ltr" style="font-size:11px">GOOGLE_API_KEY</code>).
+        العنوان الافتراضي <code dir="ltr" style="font-size:11px">generativelanguage.googleapis.com/v1beta</code>
+        والنموذج <code dir="ltr" style="font-size:11px">gemini-flash-latest</code> —
+        يمكن تغييرهما اختيارياً بـ <code dir="ltr" style="font-size:11px">AI_BASE_URL</code> و<code dir="ltr" style="font-size:11px">AI_MODEL</code>.
+      </div>
+    </div>
+
+    <div style="display:grid;gap:12px">
+      <label style="font-size:12.5px;font-weight:700;color:#6b5a45">
+        البرومت (نص تعليمات المساعد) — وهو <b>الافتراضي</b> المستخدم في كل سؤال
+        <textarea id="ai-prompt" rows="14" dir="rtl"
+                  style="width:100%;margin-top:5px;padding:10px;border:1px solid #e2d7c5;border-radius:9px;font-size:12.5px;line-height:1.75;font-family:inherit">{{ ai.prompt }}</textarea>
+      </label>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button onclick="saveAI(this)" class="btn-primary" style="flex:1;min-width:150px">💾 حفظ البرومت</button>
+        <button onclick="testAI(this)" class="btn-outline" style="min-width:130px">🧪 اختبار الاتصال</button>
+        <button onclick="listModels(this)" class="btn-outline" style="min-width:130px">📋 النماذج المتاحة</button>
+        <button onclick="resetPrompt(this)" class="btn-outline" style="min-width:130px">↩️ البرومت الافتراضي</button>
+      </div>
+      <div id="ai-models-box" hidden
+           style="font-size:12px;line-height:1.9;background:#fbf7f0;border:1px solid #e6d9c4;border-radius:10px;padding:10px 12px"></div>
+      <div style="font-size:11.5px;color:#9c8a71;line-height:1.8">
+        البرومت يدعم العناصر التالية وتُستبدل تلقائياً عند كل سؤال:
+        <code>{circles}</code> أسماء الحلقات ·
+        <code>{today}</code> تاريخ اليوم ·
+        <code>{weekday}</code> اسم اليوم
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="subpane" data-tab="sqlite" data-title="🗄 SQLite (نسخ/نقل)">
+  <div class="panel" style="border-right:4px solid #4A7B9D;">
+    <div style="font-weight:700; font-size:15px; margin-bottom:6px;">🗄 تصدير / استيراد قاعدة بيانات SQLite كاملة</div>
+    <div style="font-size:12px; color:#9c8a71; margin-bottom:16px; line-height:1.8;">
+      ملف واحد يحوي البيانات بمفاتيحها الأصلية. يعمل من PostgreSQL إلى SQLite والعكس — بنفس معمارية المشروع.
+      <br><b>لا يشترط أن يحوي الملف كل الجداول</b>: تُستبدل فقط الجداول الموجودة في ملفك،
+      و<b>الجداول غير الموجودة تُترك كما هي</b> (لا تُحذف ولا تُفرَّغ). ملف SQLite عادي بلا جدول <code dir="ltr">_meta</code> مقبول أيضاً.
+      <br>الاستيراد ذرّي (إما كله أو لا شيء) ويُبقي برومت الذكاء الاصطناعي كما هو.
+      <br><span style="color:#a03225">تنبيه:</span> إن كان ملفك يحوي جدولاً يعتمد عليه جدول آخر غير موجود فيه (مثل حلقات بلا حضور)،
+      يظهر تحذير بعدد الصفوف التي ستُحذف بالتبعية قبل التنفيذ.
+    </div>
+
+    <div style="display:grid;gap:14px">
+      <div style="background:#f7fbfd;border:1px solid #d6e6ef;border-radius:10px;padding:13px">
+        <div style="font-weight:700;font-size:13.5px;margin-bottom:8px">⬇️ تصدير نسخة كاملة</div>
+        <a href="{% url 'developer_sqlite_export' %}" class="btn-primary"
+           style="text-decoration:none;display:block;text-align:center">⬇️ تنزيل ملف .sqlite3</a>
+      </div>
+      <div style="background:#fdf7f7;border:1px solid #efd6d6;border-radius:10px;padding:13px">
+        <div style="font-weight:700;font-size:13.5px;margin-bottom:8px">⬆️ استيراد (استبدال كامل)</div>
+        <input type="file" id="sqlite-file" accept=".sqlite,.sqlite3,.db"
+               style="width:100%;font-size:12.5px;margin-bottom:10px">
+        <button id="sqlite-import-btn" onclick="importSqlite(this)" class="btn-outline"
+                style="width:100%;border-color:#c0392b;color:#c0392b">⬆️ استيراد واستبدال كل البيانات</button>
+      </div>
+      <div style="font-size:11.5px;color:#9c8a71;line-height:1.8">
+        مُحرِّك قاعدة البيانات الحالي: <b dir="ltr">{{ db_engine }}</b> ·
+        حجم الملف الأقصى 64 ميغابايت · يُنصح بأخذ نسخة تصدير قبل أي استيراد.
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="subpane" data-tab="defaults" data-title="🧹 ملء الخانات الفارغة">
+  <div class="panel" style="border-right:4px solid #A8763E;">
+    <div style="font-weight:700; font-size:15px; margin-bottom:6px;">🧹 ملء الخانات الفارغة بقيم افتراضية</div>
+    <div style="font-size:12px; color:#9c8a71; margin-bottom:16px; line-height:1.8;">
+      يمرّ على كل الحقول الفارغة ويملؤها بقيمة افتراضية في <b>دفعة واحدة ذرّية</b> (استعلامات تحديث مجمّعة، بدون حلقة على كل سجل):
+      <br>• الهواتف والملاحظات والأوصاف الفارغة ← «-»
+      <br>• تواريخ الميلاد الناقصة ← 1 يناير (قبل 12 سنة)
+      <br>• الطلاب بلا حلقة ← أول حلقة مرتّبة
+      <br>• صفحات التسميع الناقصة ← تُشتق من نطاق الآيات
+    </div>
+    <button id="defaults-btn" onclick="fillDefaults(this)" class="btn-primary" style="width:100%">🧹 ملء الخانات الفارغة الآن</button>
+    <div id="defaults-result" style="margin-top:12px;font-size:12.5px;line-height:2"></div>
+  </div>
+</section>
+
+
+<section class="subpane" data-tab="schema" data-title="🗂 الترحيلات والمخطط">
+  <div class="panel" style="border-right:4px solid {% if schema.up_to_date %}#2d9e5f{% else %}#c0392b{% endif %};">
+    <div style="font-weight:700; font-size:15px; margin-bottom:6px;">🗂 ترحيلات قاعدة البيانات (Migrations)</div>
+    <div style="font-size:12px; color:#9c8a71; margin-bottom:14px; line-height:1.8;">
+      تُطبَّق الترحيلات تلقائياً عند كل بناء على Render (<code dir="ltr">build.sh</code>) وعند إقلاع التطبيق.
+      إن ظهر خطأ مثل <code dir="ltr">relation "…" does not exist</code> فمعناه أن الترحيلات لم تُطبَّق بعد —
+      اضغط الزر هنا لتطبيقها فوراً بلا إعادة نشر.
+    </div>
+
+    {% if schema.up_to_date %}
+      <div style="background:#f2faf5;border:1px solid #cfe9d9;border-radius:10px;padding:11px 13px;font-size:13px;color:#1e7a4d;font-weight:700">
+        ✅ المخطط محدَّث — لا ترحيلات معلّقة
+      </div>
+    {% else %}
+      <div style="background:#fdf3f2;border:1px solid #f0d2ce;border-radius:10px;padding:11px 13px;font-size:13px;color:#a03225;font-weight:700;line-height:1.9">
+        ⚠️ يوجد {{ schema.pending_count }} ترحيلاً غير مطبَّق — قد تتعطّل صفحات كاملة حتى يُطبَّق:
+        <div dir="ltr" style="font-size:11.5px;font-weight:400;margin-top:5px;color:#7a3a31">{{ schema.pending|join:", " }}</div>
+      </div>
+    {% endif %}
+
+    {% if schema.missing_tables %}
+      <div style="margin-top:10px;font-size:12px;color:#a03225;line-height:1.8">
+        جداول مفقودة فعلياً: <b dir="ltr">{{ schema.missing_tables|join:", " }}</b>
+      </div>
+    {% endif %}
+
+    <button id="migrate-btn" onclick="runMigrations(this)" class="btn-primary" style="width:100%;margin-top:14px"
+            {% if schema.up_to_date %}disabled{% endif %}>
+      🗂 {% if schema.up_to_date %}لا شيء معلّق{% else %}تطبيق الترحيلات الآن{% endif %}
+    </button>
+    <button onclick="repairMigrations(this)" class="btn-outline" style="width:100%;margin-top:8px">
+      🩹 إصلاح السجل (عناصر موجودة بالفعل)
+    </button>
+    <div style="font-size:11px;color:#8a94a2;line-height:1.9;margin-top:7px">
+      إن ظهر <code dir="ltr">relation "…" already exists</code> فمعناه أن الجدول أُنشئ سابقاً
+      والترحيل غير مسجَّل — آمِن: زر «إصلاح السجل» يسجّله دون حذف أي بيانات.
+    </div>
+
+    <div style="margin-top:14px;font-size:11.5px;color:#8a94a2;line-height:1.9;border-top:1px solid #eee;padding-top:10px">
+      محرّك القاعدة: <b dir="ltr">{{ schema.engine }}</b> ·
+      الجداول: {% for name, ok in schema.tables.items %}{% if ok %}✅{% else %}⛔{% endif %} {{ name }}{% if not forloop.last %} · {% endif %}{% endfor %}
+    </div>
+    <div style="margin-top:8px;font-size:11px;color:#a0a8b4;line-height:1.8">
+      لتعطيل الترحيل التلقائي عند الإقلاع: متغيّر البيئة <code dir="ltr">AUTO_MIGRATE=false</code>.
+    </div>
+  </div>
+</section>
+
 <section class="subpane" data-tab="cache" data-title="⚡ الكاش">
   <div class="panel" style="border-right:4px solid #6B8CAE;">
     <div style="font-weight:700; font-size:15px; margin-bottom:6px;">⚡ كاش الذاكرة</div>
@@ -82,6 +254,7 @@ async function sendToTelegram(btn) {
   setBtnLoading(btn, true);
   try {
     const res = await fetch('{% url "send_all_data_telegram" %}', {
+      method: 'POST',
       headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': getCsrf() }
     });
     const data = await res.json();
@@ -93,5 +266,187 @@ async function sendToTelegram(btn) {
   }
 }
 </script>
+
+
+<script>
+function aiPayload(extra) {
+  /* البرومت فقط يُحفظ — المفتاح/العنوان/النموذج متغيّرات بيئة على الخادم */
+  return Object.assign({ prompt: document.getElementById('ai-prompt').value }, extra || {});
+}
+
+async function saveAI(btn) {
+  setBtnLoading(btn, true);
+  try {
+    const res = await fetch("{% url 'developer_ai_save' %}", {
+      method: 'POST',
+      headers: {'X-CSRFToken': getCsrf(), 'X-Requested-With': 'XMLHttpRequest'},
+      body: new URLSearchParams(aiPayload()),
+    });
+    const d = await res.json();
+    if (d.ok) showToast('✅ حُفظ البرومت (' + d.prompt_chars + ' حرفاً) · النموذج من البيئة: ' + d.model, 'success', 5000);
+    else showToast('⚠️ تعذّر الحفظ', 'warn');
+  } catch (e) { showToast('❌ خطأ في الاتصال', 'error'); }
+  finally { setBtnLoading(btn, false); }
+}
+
+async function testAI(btn) {
+  setBtnLoading(btn, true);
+  try {
+    const res = await fetch("{% url 'developer_ai_test' %}", {
+      method: 'POST',
+      headers: {'X-CSRFToken': getCsrf(), 'X-Requested-With': 'XMLHttpRequest'},
+    });
+    const d = await res.json();
+    if (d.ok) showToast('✅ الاتصال ناجح · النموذج ' + d.model
+      + (d.configured_model && d.configured_model !== d.model ? ' (بدل ' + d.configured_model + ' غير المتاح لمفتاحك)' : ''), 'success', 7000);
+    else showToast('❌ ' + (d.error || 'فشل الاختبار'), 'error', 7000);
+  } catch (e) { showToast('❌ خطأ في الاتصال', 'error'); }
+  finally { setBtnLoading(btn, false); }
+}
+
+async function resetPrompt(btn) {
+  if (!confirm('إعادة البرومت إلى النسخة الافتراضية؟')) return;
+  setBtnLoading(btn, true);
+  try {
+    const res = await fetch("{% url 'developer_ai_save' %}", {
+      method: 'POST',
+      headers: {'X-CSRFToken': getCsrf(), 'X-Requested-With': 'XMLHttpRequest'},
+      body: new URLSearchParams(aiPayload({reset_prompt: '1'})),
+    });
+    if ((await res.json()).ok) { showToast('✅ أُعيد البرومت الافتراضي', 'success'); setTimeout(() => location.reload(), 700); }
+  } catch (e) { showToast('❌ خطأ في الاتصال', 'error'); }
+  finally { setBtnLoading(btn, false); }
+}
+
+async function importSqlite(btn) {
+  const input = document.getElementById('sqlite-file');
+  if (!input.files.length) { showToast('⚠️ اختر ملف SQLite أولاً', 'warn'); return; }
+  if (!confirm('⚠️ سيتم حذف كل البيانات الحالية واستبدالها ببيانات الملف.\nهل أخذت نسخة احتياطية؟ هل أنت متأكد؟')) return;
+  const fd = new FormData();
+  fd.append('sqlite_file', input.files[0]);
+  if (window.__sqliteForce) fd.append('force', '1');
+  setBtnLoading(btn, true);
+  try {
+    const res = await fetch("{% url 'developer_sqlite_import' %}", {
+      method: 'POST',
+      headers: {'X-CSRFToken': getCsrf(), 'X-Requested-With': 'XMLHttpRequest'},
+      body: fd,
+    });
+    const d = await res.json();
+    if (d.ok) {
+      window.__sqliteForce = false;
+      showToast('✅ استُورد ' + d.total + ' سجلاً بنجاح', 'success', 6000);
+      setTimeout(() => location.reload(), 1200);
+    } else if (d.needs_confirm || (d.error || '').indexOf('بالتبعية') !== -1) {
+      window.__sqliteForce = confirm('⚠️ تحذير من الحذف بالتبعية:\n\n' + d.error + '\n\nالمتابعة مع الحذف؟');
+      if (window.__sqliteForce) {
+        showToast('⏳ إعادة المحاولة مع الاستمرار…', 'info', 3000);
+        setTimeout(() => importSqlite(btn), 300);
+      }
+    } else {
+      showToast(d.error || '❌ فشل الاستيراد', 'error', 10000);
+    }
+  } catch (e) { showToast('❌ خطأ في الاتصال', 'error'); }
+  finally { setBtnLoading(btn, false); }
+}
+
+async function fillDefaults(btn) {
+  if (!confirm('ملء كل الخانات الفارغة بقيم افتراضية الآن؟')) return;
+  setBtnLoading(btn, true);
+  try {
+    const res = await fetch("{% url 'developer_fill_defaults' %}", {
+      method: 'POST',
+      headers: {'X-CSRFToken': getCsrf(), 'X-Requested-With': 'XMLHttpRequest'},
+    });
+    const d = await res.json();
+    const box = document.getElementById('defaults-result');
+    if (d.ok) {
+      box.innerHTML = d.total
+        ? '✅ تم ملء <b>' + d.total + '</b> خانة:<br>' + d.results.map(r => '• ' + r[0] + ': ' + r[1]).join('<br>')
+        : '✅ لا توجد خانات فارغة.';
+      showToast('✅ اكتمل الملء (' + d.total + ')', 'success');
+    } else showToast(d.error || '⚠️ تعذّر الملء', 'warn');
+  } catch (e) { showToast('❌ خطأ في الاتصال', 'error'); }
+  finally { setBtnLoading(btn, false); }
+}
+
+async function runMigrations(btn) {
+  if (!confirm('تطبيق ترحيلات قاعدة البيانات الآن؟\n(آمن ولا يحذف بيانات — ينشئ الجداول/الأعمدة الناقصة فقط)')) return;
+  setBtnLoading(btn, true);
+  try {
+    const res = await fetch("{% url 'developer_run_migrations' %}", {
+      method: 'POST',
+      headers: {'X-CSRFToken': getCsrf(), 'X-Requested-With': 'XMLHttpRequest'},
+    });
+    const d = await res.json();
+    if (d.ok) {
+      const n = (d.applied || []).length;
+      showToast(n ? '✅ طُبِّق ' + n + ' ترحيلاً' : '✅ لا توجد ترحيلات معلّقة', 'success', 4000);
+      setTimeout(() => location.reload(), 900);
+    } else {
+      showToast(d.error || '❌ فشل الترحيل', 'error', 7000);
+    }
+  } catch (e) { showToast('❌ خطأ في الاتصال', 'error'); }
+  finally { setBtnLoading(btn, false); }
+}
+
+async function repairMigrations(btn) {
+  if (!confirm('تسجيل الترحيلات التي عناصرها (جداول/أعمدة) موجودة فعلاً كمطبَّقة؟\nلا يُنفَّذ أي حذف أو تعديل على البيانات.')) return;
+  setBtnLoading(btn, true);
+  try {
+    const res = await fetch("{% url 'developer_repair_migrations' %}", {
+      method: 'POST',
+      headers: {'X-CSRFToken': getCsrf(), 'X-Requested-With': 'XMLHttpRequest'},
+    });
+    const d = await res.json();
+    if (d.ok) {
+      const n = (d.recorded || []).length;
+      showToast(n ? '✅ سُجّل ' + n + ' ترحيلاً كمطبَّق' : 'ℹ️ لا شيء يحتاج إصلاحاً', 'success', 5000);
+      setTimeout(() => location.reload(), 1000);
+    } else {
+      showToast(d.error || '❌ تعذّر الإصلاح', 'error', 7000);
+    }
+  } catch (e) { showToast('❌ خطأ في الاتصال', 'error'); }
+  finally { setBtnLoading(btn, false); }
+}
+
+async function listModels(btn) {
+  setBtnLoading(btn, true);
+  const box = document.getElementById('ai-models-box');
+  box.hidden = false;
+  box.innerHTML = '⏳ جاري جلب النماذج من المزوّد…';
+  try {
+    const res = await fetch("{% url 'developer_ai_models' %}", {
+      method: 'POST',
+      headers: {'X-CSRFToken': getCsrf(), 'X-Requested-With': 'XMLHttpRequest'},
+    });
+    const d = await res.json();
+    if (!d.ok) { box.innerHTML = '⚠️ ' + (d.error || 'تعذّر الجلب'); showToast('⚠️ ' + (d.error || 'تعذّر الجلب'), 'warn', 6000); return; }
+    const cur = d.current, ok = d.current_available;
+    let html = '<b>النماذج المتاحة لمفتاحك (' + d.models.length + '):</b><div style="margin:6px 0 8px;display:flex;flex-wrap:wrap;gap:5px">';
+    d.models.forEach(m => {
+      const isCur = m === cur;
+      html += '<code dir="ltr" style="background:' + (isCur ? '#dfe9f5' : '#fff') + ';border:1px solid ' +
+              (isCur ? '#9dbcd8' : '#e3e7ec') + ';border-radius:6px;padding:1px 7px;font-size:11.5px">' + m + (isCur ? ' ✓' : '') + '</code>';
+    });
+    html += '</div>';
+    html += ok
+      ? '✅ النموذج الحالي <code dir="ltr">' + cur + '</code> متاح — إن استمر خطأ 404 فالمشكلة في <code dir="ltr">AI_BASE_URL</code>.'
+      : '⚠️ النموذج الحالي <code dir="ltr">' + cur + '</code> <b>غير متاح</b> — اضبط <code dir="ltr">AI_MODEL</code> بأحد الأسماء أعلاه'
+        + (d.recommended && d.recommended.length ? ' (الموصى به: <code dir="ltr">' + d.recommended.join('</code> · <code dir="ltr">') + '</code>)' : '') + '.';
+    if (d.in_use && d.in_use !== cur) {
+      html += '<div style="margin-top:6px">🔁 يعمل التطبيق حالياً بالنموذج <code dir="ltr">' + d.in_use + '</code> تلقائياً لأن المضبوط غير متاح لمفتاحك.</div>';
+    }
+    html += '<div style="color:#8a94a2;font-size:11px;margin-top:6px" dir="ltr">' + (d.endpoint || '') + '</div>';
+    box.innerHTML = html;
+    showToast(ok ? '✅ النموذج الحالي متاح' : '⚠️ النموذج الحالي غير متاح', ok ? 'success' : 'warn', 5000);
+  } catch (e) {
+    box.innerHTML = '❌ خطأ في الاتصال بالخادم';
+  } finally { setBtnLoading(btn, false); }
+}
+</script>
+
+
+
 
 {% endblock %}
