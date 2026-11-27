@@ -99,6 +99,8 @@
         </div>
       </div>
       <span class="dn-count" data-count>{{ b.students|length }}</span>
+      <button type="button" class="dn-addone" data-add-student-circle="{{ b.circle.id }}"
+              title="إضافة طالب إلى هذه الحلقة">＋</button>
       <button type="button" class="dn-del" data-del-circle="{{ b.circle.id }}" data-name="{{ b.circle.name }}"
               title="حذف هذه الحلقة (وطلابها) — تنتقل إلى سلة الحذف">✕</button>
     </header>
@@ -136,11 +138,9 @@
       {% endfor %}
       <div class="dn-empty">اسحب طلاباً إلى هنا</div>
     </div>
-    {% if not b.students %}
     <div class="dn-quickadd" data-quickadd>
       <button type="button" class="dn-quickadd-btn" data-add-student-circle="{{ b.circle.id }}">➕ طالب</button>
     </div>
-    {% endif %}
   </section>
   {% empty %}
   <div class="empty-state">لا توجد حلقات بعد.</div>
@@ -206,5 +206,5 @@
   🗑 <span id="dn-trash-fab-n">0</span>
 </button>
 
-<script src="{% static 'halaqat/js/sort_students.js' %}?v=4"></script>
+<script src="{% static 'halaqat/js/sort_students.js' %}?v=5"></script>
 {% endblock %}
