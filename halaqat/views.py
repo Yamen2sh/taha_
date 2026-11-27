@@ -2971,6 +2971,11 @@ def sort_students_page(request):
     # نسبة الحضور في آخر شهر لكل طالب (استعلام واحد) — للتدريج اللوني
     from datetime import timedelta
     month_start = timezone.localdate() - timedelta(days=29)
+    # أول تاريخ سجل لكل طالب — لتحديد من يملك «شهراً كاملاً» من السجلات
+    from django.db.models import Min
+    first_seen = dict(Attendance.objects.order_by()
+                      .values('student_id').annotate(first=Min('date'))
+                      .values_list('student_id', 'first'))
     tally = {}
     for sid, st, n in (Attendance.objects.filter(date__gte=month_start).order_by()
                        .values('student_id', 'status').annotate(n=Count('id'))
@@ -2978,34 +2983,43 @@ def sort_students_page(request):
         tally.setdefault(sid, {})[st] = n
 
     def grade_of(sid, joined):
-        """تدريج اللون حسب حضور آخر شهر (100% أخضر تام ← 0% أحمر تام) + شارة «جديد»."""
+        """
+        تدريج اللون حسب حضور آخر شهر (100% أخضر تام ← 0% أحمر تام).
+
+        شارة «جديد» تبقى أمام الطالب ما دام **لا يملك سجلات لشهر كامل**: لا سجلات
+        إطلاقاً، أو أقدم سجل عنده لم يتجاوز 30 يوماً (ومن لا سجلات له يُحسب من
+        تاريخ انضمامه). بعد شهر كامل من السجلات تختفي الكلمة وتبقى النسبة وحدها.
+        """
         t = tally.get(sid, {})
         attended = t.get('present', 0) + t.get('late', 0)
         counted = sum(t.values()) - t.get('excused', 0)
-        # بلا أي سجل حضور في آخر شهر → «جديد»؛ وإلا تظهر النسبة دائماً (ولو كان جديداً)
+        # هل يملك شهراً كاملاً من السجلات؟ (أقدم سجل، أو تاريخ الانضمام إن لا سجلات)
+        start = first_seen.get(sid) or joined
+        is_new = start is None or (timezone.localdate() - start).days < 30
         if counted == 0:
-            return {'grade': 'new', 'rate': None, 'label': 'جديد', 'color': '#7A5AA8',
-                    'ring': '#7A5AA8', 'ink': '#4d3471', 'is_new': True}
+            return {'grade': 'new', 'rate': None, 'is_new': is_new,
+                    'label': 'جديد' if is_new else 'بلا سجلات',
+                    'color': '#7A5AA8', 'ring': '#7A5AA8', 'ink': '#4d3471'}
         rate = round(attended * 100 / counted)
         if rate >= 90:
-            return {'grade': 'g90', 'rate': rate, 'label': 'ممتاز',
+            return {'grade': 'g90', 'rate': rate, 'is_new': is_new, 'label': 'ممتاز',
                     'color': '#2E7D46', 'ring': '#2E7D46', 'ink': '#1f5530'}
         if rate >= 75:
-            return {'grade': 'g75', 'rate': rate, 'label': 'جيد جداً',
+            return {'grade': 'g75', 'rate': rate, 'is_new': is_new, 'label': 'جيد جداً',
                     'color': '#4E9B45', 'ring': '#4E9B45', 'ink': '#376e31'}
         if rate >= 60:
-            return {'grade': 'g60', 'rate': rate, 'label': 'جيد',
+            return {'grade': 'g60', 'rate': rate, 'is_new': is_new, 'label': 'جيد',
                     'color': '#8DB33C', 'ring': '#8DB33C', 'ink': '#5f7a26'}
         if rate >= 40:
-            return {'grade': 'g40', 'rate': rate, 'label': 'متوسّط',
+            return {'grade': 'g40', 'rate': rate, 'is_new': is_new, 'label': 'متوسّط',
                     'color': '#D9A521', 'ring': '#D9A521', 'ink': '#8a6410'}
         if rate >= 25:
-            return {'grade': 'g25', 'rate': rate, 'label': 'ضعيف',
+            return {'grade': 'g25', 'rate': rate, 'is_new': is_new, 'label': 'ضعيف',
                     'color': '#DE7A2A', 'ring': '#DE7A2A', 'ink': '#98521a'}
         if rate >= 10:
-            return {'grade': 'g10', 'rate': rate, 'label': 'متعثّر',
+            return {'grade': 'g10', 'rate': rate, 'is_new': is_new, 'label': 'متعثّر',
                     'color': '#CF4A32', 'ring': '#CF4A32', 'ink': '#8d3020'}
-        return {'grade': 'g0', 'rate': rate, 'label': 'خطر',
+        return {'grade': 'g0', 'rate': rate, 'is_new': is_new, 'label': 'خطر',
                 'color': '#B02A22', 'ring': '#B02A22', 'ink': '#7a1c16'}
 
     def sabr_of(sid):
