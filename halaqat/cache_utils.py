@@ -86,7 +86,7 @@ def circles():
 
 def _build_students_index():
     from .models import Student
-    rows = list(Student.objects.select_related('circle').order_by('name')
+    rows = list(Student.objects.active().select_related('circle').order_by('name')
                 .values_list('id', 'name', 'circle_id', 'circle__name'))
     payload = json.dumps(rows, ensure_ascii=False, separators=(',', ':'))
     return {'v': hashlib.sha1(payload.encode('utf-8')).hexdigest()[:16], 'payload': payload, 'rows': rows}
@@ -105,7 +105,7 @@ def students_search_rows():
     def build():
         from .models import Student
         last = {}
-        for sid, rid, date, to_page, ts, ta in (Student.objects.filter(recitations__isnull=False)
+        for sid, rid, date, to_page, ts, ta in (Student.objects.active().filter(recitations__isnull=False)
                 .order_by()
                 .values_list('id', 'recitations__id', 'recitations__date',
                              'recitations__to_page', 'recitations__to_surah', 'recitations__to_ayah')):
@@ -114,7 +114,7 @@ def students_search_rows():
                 last[sid] = (date, rid, to_page, ts, ta)
         from .quran import page_of
         rows = []
-        qs = (Student.objects.select_related('circle').order_by('name')
+        qs = (Student.objects.active().select_related('circle').order_by('name')
               .values_list('id', 'name', 'circle_id', 'circle__name', 'birth_date'))
         for sid, name, cid, cname, birth in qs:
             rec = last.get(sid)

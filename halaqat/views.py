@@ -799,7 +799,8 @@ def admin_panel(request):
         'viewer_form': viewer_form,
         'viewers': _viewer_users(),
         'circles': cache_utils.circles(),            # من الكاش (مع أعداد الطلاب)
-        'students': Student.objects.select_related('circle').all(),
+        'students': Student.objects.active().select_related('circle'),
+        'withdrawn_count': Student.objects.withdrawn().count(),
         'courses': Course.objects.prefetch_related('teachers', 'students').all(),
         'active_nav': 'admin',
     }
@@ -869,9 +870,15 @@ def edit_student(request, pk):
 def delete_circle(request, pk):
     circle = get_object_or_404(Circle, pk=pk)
     name = circle.name
-    circle.delete()  # يحذف تلقائياً طلاب الحلقة وسجلات حضورهم (CASCADE)
-    messages.success(request, f'تم حذف حلقة "{name}" وجميع بياناتها المرتبطة بها.')
-    _log_admin_action(request, f'🗑 حذف حلقة: {name} (وكل طلابها وسجلات حضورهم)')
+    # الطلاب لا يُحذفون مع الحلقة (SET_NULL): يصبحون «بلا حلقة» ويظهرون في الحاوية
+    # الفارغة بلوحة الفرز، فيمكن إعادة توزيعهم أو فصلهم صراحةً.
+    moved = circle.students.update(circle=None)
+    circle.delete()
+    msg = f'تم حذف حلقة «{name}».'
+    if moved:
+        msg += f' طلابها ({moved}) لم يُحذفوا — صاروا بلا حلقة في الحاوية الفارغة.'
+    messages.success(request, msg)
+    _log_admin_action(request, f'🗑 حذف حلقة: {name} (طلابها {moved} بلا حلقة، سجلاتهم محفوظة)')
     return redirect('admin_panel')
 
 
@@ -880,9 +887,9 @@ def delete_circle(request, pk):
 def delete_student(request, pk):
     student = get_object_or_404(Student, pk=pk)
     name = student.name
-    student.delete()  # يحذف تلقائياً سجلات حضوره (CASCADE)
-    messages.success(request, f'تم حذف الطالب "{name}".')
-    _log_admin_action(request, f'🗑 حذف طالب: {name}')
+    student.withdraw()  # فصل لا حذف — السجل والحضور محفوظان
+    messages.success(request, f'تم فصل الطالب «{name}» — سجله محفوظ ويمكن إعادته من صفحة المفصولين.')
+    _log_admin_action(request, f'🚪 فصل طالب: {name}')
     return redirect('admin_panel')
 
 
@@ -1474,7 +1481,7 @@ def send_all_data_telegram(request):
     for i, s in enumerate(
         Student.objects.select_related('circle').order_by('circle__display_order', 'circle__name', 'name'), 1
     ):
-        ws_students.append([i, s.name, s.circle.name,
+        ws_students.append([i, s.name, s.circle.name if s.circle else 'بلا حلقة',
                             s.phone or '—', s.notes or '—',
                             timezone.localtime(s.joined_at).date().isoformat(),
                             s.birth_date.isoformat() if s.birth_date else '—',
@@ -1525,7 +1532,7 @@ def send_all_data_telegram(request):
     ws_sabr = wb.create_sheet('السبر')
     _style_sheet(ws_sabr, ['التاريخ', 'اسم الطالب', 'الحلقة', 'التفاصيل والملاحظات', 'معرّف الطالب'], [14, 30, 28, 50, 11])
     for sb in Sabr.objects.select_related('student', 'student__circle').order_by('-date', 'student__name'):
-        ws_sabr.append([sb.date.isoformat(), sb.student.name, sb.student.circle.name, sb.notes or '', sb.student_id])
+        ws_sabr.append([sb.date.isoformat(), sb.student.name, sb.student.circle.name if sb.student.circle else 'بلا حلقة', sb.notes or '', sb.student_id])
 
     # ── ورقة 8: التسميع (الأعمدة M و N = أرقام السور لإعادة استيراد دقيقة) ──────────
     ws_rec = wb.create_sheet('التسميع')
@@ -2756,7 +2763,7 @@ def _sabr_payload(student):
     return {
         'ok': True,
         'today': today.isoformat(),
-        'student': {'id': student.id, 'name': student.name, 'circle': student.circle.name},
+        'student': {'id': student.id, 'name': student.name, 'circle': student.circle.name if student.circle else 'بلا حلقة'},
         'last': items[0] if items else None,
         'history': items,
         'total': student.sabrs.count(),
@@ -3028,7 +3035,7 @@ def sort_students_page(request):
 
     by_circle, parked = {c.id: [] for c in circles}, []
     total = 0
-    for sid, name, cid, birth, parked_at, joined in (Student.objects.order_by('name')
+    for sid, name, cid, birth, parked_at, joined in (Student.objects.active().order_by('name')
             .values_list('id', 'name', 'circle_id', 'birth_date', 'parked_at', 'joined_at')):
         rec = last.get(sid)
         card = {'id': sid, 'name': name,
@@ -3108,7 +3115,7 @@ def sort_students_move(request):
             _log_student_move(request, f'{student.name}: «{old.name}» ← «{target.name}»')
 
     count_ids = {old.id} if parking else {old.id, target_id}
-    counts = dict(Student.objects.filter(circle_id__in=count_ids, parked_at__isnull=True)
+    counts = dict(Student.objects.active().filter(circle_id__in=count_ids, parked_at__isnull=True)
                   .values('circle_id').annotate(n=Count('id')).values_list('circle_id', 'n'))
     parked_count = Student.objects.filter(parked_at__isnull=False).count()
     return JsonResponse({
@@ -3269,11 +3276,14 @@ def sort_students_delete(request):
         return JsonResponse({'ok': False, 'error': 'لا عناصر للحذف'}, status=400)
 
     if kind == 'student':
-        qs = Student.objects.filter(id__in=ids)
+        # فصل لا حذف: سجل الطالب وحضوره وتسميعه تبقى، ويختفي من الحلقات والحضور،
+        # ويمكن إعادته من صفحة «المفصولون».
+        qs = Student.objects.filter(id__in=ids, withdrawn_at__isnull=True)
         names = list(qs.values_list('name', flat=True))[:5]
-        n = qs.delete()[0]
-        _log_admin_action(request, f'🗑 حذف {len(names)}+ طالب من لوحة الفرز: {", ".join(names)}')
-        return JsonResponse({'ok': True, 'deleted': 'student', 'count': n})
+        now = timezone.now()
+        n = qs.update(withdrawn_at=now, withdrawn_reason='', parked_at=None, updated_at=now)
+        _log_admin_action(request, f'🚪 فصل {n} طالب من لوحة الفرز: {", ".join(names)}')
+        return JsonResponse({'ok': True, 'deleted': 'student', 'count': n, 'withdrawn': n})
 
     if kind == 'teacher':
         qs = Teacher.objects.filter(id__in=ids)
@@ -3288,6 +3298,9 @@ def sort_students_delete(request):
     if kind == 'circle':
         qs = Circle.objects.filter(id__in=ids)
         names = list(qs.values_list('name', flat=True))[:5]
+        # طلاب الحلقة يبقون: يصبحون بلا حلقة (circle=None) وسجلاتهم محفوظة.
+        Student.objects.filter(circle_id__in=ids).update(
+            circle=None, parked_at=timezone.now(), updated_at=timezone.now())
         n = qs.delete()[0]
         _log_admin_action(request, f'🗑 حذف حلقة من لوحة الفرز: {", ".join(names)}')
         return JsonResponse({'ok': True, 'deleted': 'circle', 'count': n})
@@ -3341,7 +3354,7 @@ def _recitation_payload(student, on_date=None):
         'ok': True,
         'today': today.isoformat(),
         'student': {'id': student.id, 'name': student.name,
-                    'circle': student.circle.name, 'circle_id': student.circle_id},
+                    'circle': student.circle.name if student.circle else 'بلا حلقة', 'circle_id': student.circle_id},
         'history': items,
         'last': items[0] if items else None,
         'total': qs.count(),
@@ -3446,7 +3459,7 @@ def recitation_page(request):
         next_circle = circles[idx + 1] if idx < len(circles) - 1 else None
         circle_obj = Circle.objects.select_related('teacher', 'substitute_teacher').get(pk=circle['id'])
 
-    students = list(Student.objects.filter(circle_id=circle['id'], parked_at__isnull=True)
+    students = list(Student.objects.active().filter(circle_id=circle['id'], parked_at__isnull=True)
                     .order_by('name')) if circle else []
     ids = [st.id for st in students]
     last_by, day_by = {}, defaultdict(list)
@@ -3710,3 +3723,76 @@ def stats_assistant_export(request, fmt):
     response['Content-Disposition'] = (f'attachment; filename="masjid_taha_stats_{stamp}.{fmt}"; '
                                        f"filename*=UTF-8''{quote(result['title'])}_{stamp}.{fmt}")
     return response
+
+
+# ── المفصولون: سجلات محفوظة خارج الحلقات، تنتظر العودة ──────────────────────
+@login_required
+def withdrawn_students_page(request):
+    """
+    صفحة «المفصولون»: كل طالب أُوقف عن الحلقة (بدل حذفه). سجله وحضوره وتسميعه
+    محفوظ، ويظهر هنا لإعادته إلى حلقة عند عودته.
+    """
+    from .quran import page_of
+    q = (request.GET.get('q') or '').strip()
+    qs = Student.objects.withdrawn().select_related('circle').order_by('-withdrawn_at', 'name')
+    if q:
+        qs = qs.filter(name__icontains=q)
+
+    rows = []
+    for s in qs:
+        rec = s.recitations.order_by('-date', '-id').values_list('date', 'to_page', 'to_surah', 'to_ayah').first()
+        last_page = None
+        if rec:
+            try:
+                last_page = rec[1] or page_of(rec[2], rec[3])
+            except Exception:
+                last_page = rec[1]
+        rows.append({
+            'student': s,
+            'last_page': last_page,
+            'last_date': rec[0] if rec else None,
+            'attendance': s.attendance_records.count(),
+            'withdrawn_on': timezone.localtime(s.withdrawn_at).date() if s.withdrawn_at else None,
+        })
+
+    return render(request, 'halaqat/withdrawn_students.html', {
+        'rows': rows,
+        'circles': cache_utils.circles(),
+        'q': q,
+        'total': len(rows),
+        'all_withdrawn': Student.objects.withdrawn().count(),
+        'active_nav': 'admin',
+    })
+
+
+@login_required
+@require_POST
+def withdrawn_student_reinstate(request):
+    """إعادة طالب مفصول: يُمسح ختم الفصل ويُسند لحلقة (circle_id أو park للحاوية)."""
+    student_id = _pk_or_none(request.POST.get('student_id'))
+    if not student_id:
+        return JsonResponse({'ok': False, 'error': 'معرّف غير صالح'}, status=400)
+
+    student = Student.objects.filter(pk=student_id, withdrawn_at__isnull=False).first()
+    if not student:
+        return JsonResponse({'ok': False, 'error': 'طالب غير موجود أو غير مفصول'}, status=404)
+
+    raw_circle = (request.POST.get('circle_id') or '').strip()
+    circle = None
+    park = raw_circle == 'park' or raw_circle == ''
+    if not park:
+        circle = Circle.objects.filter(pk=_pk_or_none(raw_circle)).first()
+        if not circle:
+            return JsonResponse({'ok': False, 'error': 'الحلقة غير موجودة'}, status=404)
+
+    student.reinstate(circle=circle)
+    if park:
+        Student.objects.filter(pk=student.id).update(parked_at=timezone.now())
+
+    _log_admin_action(
+        request,
+        f'↩️ إعادة طالب مفصول: {student.name} → '
+        + ('الحاوية الفارغة' if park else circle.name),
+    )
+    return JsonResponse({'ok': True, 'student_id': student.id,
+                         'circle_id': 'park' if park else circle.id})

@@ -112,7 +112,8 @@ class WhatsAppAbsentForm(forms.Form):
 class StudentMultipleChoiceField(forms.ModelMultipleChoiceField):
     """يعرض اسم الطالب مع اسم حلقته لتسهيل الاختيار من قائمة طويلة"""
     def label_from_instance(self, obj):
-        return f'{obj.name} — {obj.circle.name}'
+        # الحلقة قد تكون فارغة: طالب بلا حلقة (بعد حذف حلقته أو وضعه في الحاوية الفارغة)
+        return f'{obj.name} — {obj.circle.name if obj.circle else "بلا حلقة"}'
 
 
 class CourseForm(forms.ModelForm):
@@ -129,7 +130,7 @@ class CourseForm(forms.ModelForm):
         label='الأساتذة / المحاضرون المسؤولون',
     )
     students = StudentMultipleChoiceField(
-        queryset=Student.objects.select_related('circle').order_by('circle__name', 'name'),
+        queryset=Student.objects.active().select_related('circle').order_by('circle__name', 'name'),
         widget=forms.CheckboxSelectMultiple,
         required=False,
         label='الطلاب المشاركون',

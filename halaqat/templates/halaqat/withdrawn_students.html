@@ -1,0 +1,109 @@
+{% extends "halaqat/base.html" %}
+{% load static %}
+{% block title %}الطلاب المفصولون — مسجد طه{% endblock %}
+{% block content %}
+<style>
+  .page-wrap{max-width:none}
+  .wd-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:10px 0 14px}
+  .wd-bar input[type=search]{flex:1;min-width:180px;padding:8px 12px;border:1px solid #ddd0bd;border-radius:9px;font-family:inherit}
+  .wd-chip{background:#f5efe4;border:1px solid #e3d6c0;border-radius:999px;padding:5px 12px;font-size:12.5px;color:#6b5844}
+  .wd-chip.ok{background:#eaf6ee;border-color:#bfe3cb;color:#22633a}
+  .wd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(268px,1fr));gap:12px}
+  .wd-card{background:#fff;border:1px solid #e6dccb;border-radius:13px;padding:12px 13px;box-shadow:0 1px 2px rgba(120,95,60,.05)}
+  .wd-card.parked{border-style:dashed}
+  .wd-name{font-weight:700;font-size:15px;color:#2f2418;margin-bottom:3px}
+  .wd-meta{font-size:12px;color:#8a7862;line-height:1.75;margin-bottom:9px}
+  .wd-meta b{color:#5d4a35;font-weight:600}
+  .wd-acts{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+  .wd-acts select{flex:1;min-width:120px;padding:6px 8px;border:1px solid #ddd0bd;border-radius:8px;font-family:inherit;font-size:12.5px}
+  .wd-btn{border:none;border-radius:8px;padding:7px 13px;background:#2f7a4a;color:#fff;font-family:inherit;font-size:12.5px;font-weight:600;cursor:pointer}
+  .wd-btn:disabled{opacity:.5;cursor:default}
+  .wd-empty{text-align:center;padding:44px 10px;color:#9c8b74;font-size:14px}
+</style>
+
+<a href="{% url 'admin_panel' %}#sort" class="back-link">→ رجوع للوحة التحكم</a>
+
+<div class="page-header dn-pageheader">
+  <h2>🚪 الطلاب المفصولون</h2>
+  <div class="desc">
+    فصل الطالب <b>لا يحذف سجله</b>: حضوره وتسميعه وبطاقته تبقى محفوظة هنا. عند عودته اختر حلقة
+    واضغط «إعادة» فيرجع كما كان.
+  </div>
+</div>
+
+<form class="wd-bar" method="get">
+  <input type="search" name="q" value="{{ q }}" placeholder="🔍 ابحث باسم الطالب…" autocomplete="off">
+  <button class="wd-btn" type="submit">بحث</button>
+  <span class="wd-chip ok">معروضون: {{ total }}</span>
+  <span class="wd-chip">إجمالي المفصولين: {{ all_withdrawn }}</span>
+</form>
+
+{% if rows %}
+<div class="wd-grid" id="wd-grid"
+     data-reinstate-url="{% url 'withdrawn_student_reinstate' %}">
+  {% for r in rows %}
+  <article class="wd-card{% if r.student.is_parked %} parked{% endif %}" data-student="{{ r.student.id }}">
+    <div class="wd-name">{{ r.student.name }}</div>
+    <div class="wd-meta">
+      فُصل في <b>{{ r.withdrawn_on|date:'Y-m-d' }}</b>
+      {% if r.student.withdrawn_reason %} — السبب: <b>{{ r.student.withdrawn_reason }}</b>{% endif %}<br>
+      الحلقة السابقة: <b>{% if r.student.circle %}{{ r.student.circle.name }}{% else %}بلا حلقة{% endif %}</b><br>
+      سجلات حضور: <b>{{ r.attendance }}</b>
+      {% if r.last_page %} · آخر تسميع: <b>صفحة {{ r.last_page }}</b>{% endif %}
+      {% if r.last_date %} ({{ r.last_date|date:'Y-m-d' }}){% endif %}
+    </div>
+    <div class="wd-acts">
+      <select data-circle-select aria-label="الحلقة عند الإعادة">
+        <option value="park">— الحاوية الفارغة (بلا حلقة) —</option>
+        {% for c in circles %}
+        <option value="{{ c.id }}"{% if r.student.circle and r.student.circle.id == c.id %} selected{% endif %}>{{ c.name }}</option>
+        {% endfor %}
+      </select>
+      <button class="wd-btn" type="button" data-reinstate>↩️ إعادة</button>
+    </div>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<div class="wd-empty">
+  {% if q %}لا طالب مفصول بهذا الاسم.{% else %}لا يوجد طلاب مفصولون — كل الطلاب نشطون.{% endif %}
+</div>
+{% endif %}
+
+<script>
+(function () {
+  var grid = document.getElementById('wd-grid');
+  if (!grid) return;
+  var url = grid.dataset.reinstateUrl;
+  function csrf() {
+    var m = document.cookie.match(/(^|;\s*)csrftoken=([^;]+)/);
+    return m ? decodeURIComponent(m[2]) : '';
+  }
+  grid.addEventListener('click', function (e) {
+    var btn = e.target.closest('[data-reinstate]');
+    if (!btn) return;
+    var card = btn.closest('.wd-card');
+    var sel = card.querySelector('[data-circle-select]');
+    var fd = new FormData();
+    fd.append('student_id', card.dataset.student);
+    fd.append('circle_id', sel.value);
+    fd.append('csrfmiddlewaretoken', csrf());
+    btn.disabled = true;
+    btn.textContent = '…جارٍ';
+    fetch(url, { method: 'POST', body: fd, headers: { 'X-CSRFToken': csrf() }, credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.ok) { throw new Error(d.error || 'فشلت الإعادة'); }
+        card.style.transition = 'opacity .25s';
+        card.style.opacity = '0';
+        setTimeout(function () { card.remove(); }, 260);
+      })
+      .catch(function (err) {
+        btn.disabled = false;
+        btn.textContent = '↩️ إعادة';
+        alert('تعذّرت الإعادة: ' + err.message);
+      });
+  });
+})();
+</script>
+{% endblock %}

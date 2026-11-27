@@ -1,4 +1,4 @@
-<div class="card att-card" data-att-card data-student="{{ student.name }}" data-circle="{{ student.circle.name }}"
+<div class="card att-card" data-att-card data-student="{{ student.name }}" data-circle="{{ student.circle.name|default:'بلا حلقة' }}"
      data-start="{{ month.start|date:'Y-m-d' }}" data-end="{{ month.end|date:'Y-m-d' }}"
      data-grade="{{ month.grade.grade }}" data-rate="{{ month.grade.rate|default_if_none:'' }}"
      data-grade-label="{{ month.grade.label }}">

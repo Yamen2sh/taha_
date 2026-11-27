@@ -3,12 +3,12 @@
 {% block title %}{{ student.name }} - جرد الطالب{% endblock %}
 {% block content %}
 
-<a href="{% url 'circle_detail' student.circle.id %}" class="back-link">→ رجوع لحلقة {{ student.circle.name }}</a>
+{% if student.circle %}<a href="{% url 'circle_detail' student.circle.id %}" class="back-link">→ رجوع لحلقة {{ student.circle.name }}</a>{% else %}<a href="{% url 'admin_panel' %}#sort" class="back-link">→ رجوع للوحة التحكم (بلا حلقة)</a>{% endif %}
 
 <div class="page-header">
   <h2>👤 {{ student.name }}</h2>
   <div class="desc">
-    الحلقة: {{ student.circle.name }}
+    الحلقة: {% if student.circle %}{{ student.circle.name }}{% else %}<span style="color:#b45309">بلا حلقة</span>{% endif %}
     {% if student.circle.teacher %} · الأستاذ: <a href="{% url 'teacher_profile' student.circle.teacher.id %}" class="student-link">{{ student.circle.teacher.name }}</a>{% endif %}
     {% if student.phone %} · هاتف: {{ student.phone }}{% endif %}
     · منضم منذ {{ student.joined_at|date:"Y-m-d" }}

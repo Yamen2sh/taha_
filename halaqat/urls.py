@@ -77,6 +77,10 @@ urlpatterns = [
     path('admin-panel/sort-students/delete/', views.sort_students_delete, name='sort_students_delete'),
     path('admin-panel/sort-students/circle-info/', views.sort_students_circle_delete_info, name='sort_students_circle_info'),
 
+    # ── المفصولون: سجلات محفوظة يمكن إعادتها إلى حلقة ──
+    path('admin-panel/withdrawn/', views.withdrawn_students_page, name='withdrawn_students'),
+    path('admin-panel/withdrawn/reinstate/', views.withdrawn_student_reinstate, name='withdrawn_student_reinstate'),
+
     # ── ربط كل أستاذ بحلقته (ويسمح بربط مؤقت ليوم واحد) ──
     path('admin-panel/teacher-links/', views.teacher_links_page, name='teacher_links'),
     path('admin-panel/teacher-links/set/', views.teacher_link_set, name='teacher_link_set'),
