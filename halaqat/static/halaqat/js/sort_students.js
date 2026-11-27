@@ -33,8 +33,10 @@
   const toast = (m, t) => { if (typeof window.showToast === 'function') window.showToast(m, t || 'info', 3500); };
   const post = (url, data, opts) => window.TahaSync
     ? window.TahaSync.post(url, data, opts)
-    : fetch(url, {method: 'POST', headers: {'X-CSRFToken': getCsrf(), 'X-Requested-With': 'XMLHttpRequest'},
-                  body: new URLSearchParams(data).toString()}).then(r => r.json());
+    : fetch(url, {
+      method: 'POST', headers: { 'X-CSRFToken': getCsrf(), 'X-Requested-With': 'XMLHttpRequest' },
+      body: new URLSearchParams(data).toString()
+    }).then(r => r.json());
 
   // «حاوية» = أي عمود قابل للإفلات: حلقة (.dn-col) أو الحاوية الفارغة (.dn-park)
   const COL_SEL = '.dn-col, .dn-park';
@@ -126,8 +128,8 @@
     Object.keys(groups).forEach(kind => {
       fetch(DELETE_URL, {
         method: 'POST', keepalive: true,
-        headers: {'X-CSRFToken': token, 'X-Requested-With': 'XMLHttpRequest'},
-        body: new URLSearchParams({kind, ids: groups[kind].join(',')}).toString(),
+        headers: { 'X-CSRFToken': token, 'X-Requested-With': 'XMLHttpRequest' },
+        body: new URLSearchParams({ kind, ids: groups[kind].join(',') }).toString(),
       });
     });
     basket.clear();
@@ -154,7 +156,7 @@
   $undo.addEventListener('click', undo);
   document.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z' &&
-        !/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || '')) {
+      !/^(INPUT|TEXTAREA|SELECT)$/.test((document.activeElement || {}).tagName || '')) {
       e.preventDefault();
       undo();
     }
@@ -169,17 +171,17 @@
     card.classList.toggle('dn-card-park', toIsPark);
     card.classList.add('is-saving');
     try {
-      const data = await post(MOVE_URL, {student_id: id, circle_id: toIsPark ? 'park' : toCol.dataset.circle},
-                              {label: 'نقل طالب', key: 'move:' + id});
+      const data = await post(MOVE_URL, { student_id: id, circle_id: toIsPark ? 'park' : toCol.dataset.circle },
+        { label: 'نقل طالب', key: 'move:' + id });
       if (!isUndo) {
-        undoStack.push({id, name: stdName(card), fromCircle: fromCol.dataset.circle, fromName: nameOf(fromCol)});
+        undoStack.push({ id, name: stdName(card), fromCircle: fromCol.dataset.circle, fromName: nameOf(fromCol) });
         if (undoStack.length > 30) undoStack.shift();
         syncUndo();
       }
       card.classList.add('flash');
       setTimeout(() => card.classList.remove('flash'), 1500);
       // أظهر البطاقة في مكانها الجديد (الحاوية قد تحتاج تمريراً داخلياً)
-      try { card.scrollIntoView({block: 'nearest'}); } catch (e) { /* غير مدعوم */ }
+      try { card.scrollIntoView({ block: 'nearest' }); } catch (e) { /* غير مدعوم */ }
       const verb = toIsPark ? 'وُضع في الحاوية الفارغة' : `${isUndo ? 'أُعيد' : 'نُقل'} إلى ${nameOf(toCol)}`;
       const msg = `✅ «${stdName(card)}» ${verb}`;
       setStatus(data.queued ? '📴 ' + msg + ' — سيُرسل عند رجوع الاتصال' : msg);
@@ -187,7 +189,7 @@
       // تحديث الفهرس المحلي فوراً
       if (window.StudentIndex) {
         const c = window.StudentIndex.get(id);
-        window.StudentIndex.putLocal(id, {circle_id: toIsPark ? null : toCol.dataset.circle});
+        window.StudentIndex.putLocal(id, { circle_id: toIsPark ? null : toCol.dataset.circle });
         if (c) { /* لا شيء إضافي */ }
       }
       return true;
@@ -235,7 +237,7 @@
 
   function hover(d) {
     // الأولوية للعمود الذي دخل المؤشر حدوده فعلاً (أدق من النقطة)
-    const col = d.enterOver || colFromPoint(d.x, d.y);
+    const col = colFromPoint(d.x, d.y);
     if (col === d.over) return;
     if (d.over) d.over.classList.remove('is-over');
     d.over = col;
@@ -290,7 +292,7 @@
     document.body.classList.remove('dn-dragging');
     try { d.card.releasePointerCapture(d.pid); } catch (e) { /* تجاهل */ }
     board.querySelectorAll('.is-over').forEach(c => c.classList.remove('is-over'));
-    const target = drop ? (d.enterOver || colFromPoint(d.x, d.y)) : null;
+    const target = drop ? colFromPoint(d.x, d.y) : null;
     if (!target) {
       if (drop) toast('أفلتت البطاقة خارج أي حلقة — لم يتغيّر شيء', 'warn');
       return;
@@ -316,14 +318,14 @@
     if (fromCol === toCol) return;
     if (toPark) {
       const ok = confirm(`إخراج «${tname}» من حلقته (${nameOf(fromCol)})؟\n\nسيصبح بلا حلقة ويظهر في «الحاوية الفارغة».` +
-                         `\nلا يُحذف من النظام.`);
+        `\nلا يُحذف من النظام.`);
       if (!ok) return;
     }
     tcard.classList.add('is-saving');
     try {
       const data = await post(TCH_MOVE_URL,
-        {teacher_id: tid, circle_id: toPark ? 'park' : toCol.dataset.circle},
-        {label: 'نقل أستاذ', key: 'tmv:' + tid});
+        { teacher_id: tid, circle_id: toPark ? 'park' : toCol.dataset.circle },
+        { label: 'نقل أستاذ', key: 'tmv:' + tid });
       // أكّد بصرياً: انقل البطاقة إلى مكانها الجديد
       const parkBox = document.querySelector('[data-park-teachers]');
       if (toPark) {
@@ -400,24 +402,10 @@
     }
   });
 
-  /* العمود الذي يدخله المؤشر أثناء السحب — أدق وسيلة لتحديد الهدف
-     (شبح السحب عليه pointer-events:none فلا يحجب الأحداث عن الأعمدة). */
-  board.addEventListener('pointerover', e => {
-    if (!drag || !drag.active) return;
-    const col = e.target.closest(COL_SEL);
-    if (col && col !== drag.enterOver) {
-      drag.enterOver = col;
-      hover(drag);
-    }
-  });
-  board.addEventListener('pointerleave', e => {
-    if (!drag || !drag.active) return;
-    const col = e.target.closest(COL_SEL);
-    if (col && drag.enterOver === col && !col.contains(e.relatedTarget)) {
-      drag.enterOver = null;
-      hover(drag);
-    }
-  });
+  /* تحديد العمود الهدف يتم بإحداثيات المؤشر فقط (colFromPoint).
+     كان هنا مستمعا pointerover/pointerleave يحفظان «العمود الداخل»، لكن setPointerCapture على البطاقة
+     يجعل المتصفح يطلق pointerover على البطاقة نفسها (داخل عمودها الأصلي) فيُعتبر الهدف = المصدر
+     ويُهمَل الإفلات بصمت. */
 
   document.addEventListener('pointermove', e => {
     const d = drag;
@@ -435,7 +423,7 @@
     e.preventDefault();
     place(d);
     hover(d);
-  }, {passive: false});
+  }, { passive: false });
 
   document.addEventListener('pointerup', e => { if (drag && e.pointerId === drag.pid) finish(true); });
   document.addEventListener('pointercancel', e => {
@@ -444,7 +432,7 @@
     finish(false);
     if (wasActive) toast('↩ أُلغي السحب — اسحب من المقبض ⠿ أو اضغط مطوّلاً', 'warn');
   });
-  document.addEventListener('touchmove', e => { if (drag && drag.active) e.preventDefault(); }, {passive: false});
+  document.addEventListener('touchmove', e => { if (drag && drag.active) e.preventDefault(); }, { passive: false });
   board.addEventListener('contextmenu', e => { if (e.target.closest('.dn-card, .dn-teacher-card')) e.preventDefault(); });
   board.addEventListener('dragstart', e => e.preventDefault());
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && drag && drag.active) finish(false); });
@@ -462,13 +450,13 @@
     const get = n => (form.querySelector('[name="' + n + '"]') || {}).value || '';
     const name = get('name').trim();
     if (!name) { form.querySelector('[name="name"]').focus(); return; }
-    const body = {kind, name};
+    const body = { kind, name };
     if (kind === 'student') { body.birth_date = get('birth_date'); body.circle_id = get('circle_id'); }
     if (kind === 'teacher') body.phone = get('phone');
     if (kind === 'circle') body.teacher_id = get('teacher_id');
     btn.disabled = true;
     try {
-      const data = await post(ADD_URL, body, {label: 'إضافة ' + name});
+      const data = await post(ADD_URL, body, { label: 'إضافة ' + name });
       if (kind === 'student') addStudentCard(data.student, body.circle_id);
       if (kind === 'teacher') addTeacherCard(data.teacher);
       if (kind === 'circle') addCircleBoard(data.circle);
@@ -485,7 +473,7 @@
   /* ── إضافة سريعة من الحاوية الفارغة (طالب/أستاذ) بلا فتح شريط الإضافة ── */
   /* إضافة مباشرة داخل الحاوية: نُظهر حقلاً صغيراً مكان الزر بدل نافذة prompt
      (بعض المتصفحات/الإضافات تحجب prompt، وكانت الإضافة تبدو معطّلة). */
-  function inlineAdd(btn, {kind, label, circleId}) {
+  function inlineAdd(btn, { kind, label, circleId }) {
     if (btn.disabled || btn.closest('.dn-inline-add')) return;
     const box = document.createElement('div');
     box.className = 'dn-inline-add';
@@ -514,9 +502,9 @@
       if (!name) { inp.focus(); return; }
       ok.disabled = true; inp.disabled = true;
       try {
-        const body = {kind, name};
+        const body = { kind, name };
         if (kind === 'student') body.circle_id = circleId;
-        const data = await post(ADD_URL, body, {label: 'إضافة ' + name});
+        const data = await post(ADD_URL, body, { label: 'إضافة ' + name });
         if (kind === 'student') addStudentCard(data.student, circleId);
         else addTeacherCard(data.teacher);
         toast('✅ أُضيف «' + name + '»', 'success');
@@ -533,12 +521,12 @@
   document.addEventListener('click', e => {
     const stBtn = e.target.closest('[data-add-student-circle]');
     if (stBtn) {
-      inlineAdd(stBtn, {kind: 'student', label: 'اسم الطالب…', circleId: stBtn.dataset.addStudentCircle});
+      inlineAdd(stBtn, { kind: 'student', label: 'اسم الطالب…', circleId: stBtn.dataset.addStudentCircle });
       return;
     }
     const tBtn = e.target.closest('[data-add-teacher]');
     if (tBtn) {
-      inlineAdd(tBtn, {kind: 'teacher', label: 'اسم الأستاذ/الكادر…'});
+      inlineAdd(tBtn, { kind: 'teacher', label: 'اسم الأستاذ/الكادر…' });
     }
   });
 
@@ -708,7 +696,7 @@
   // {key: {kind, id, name, el}}
   const basket = new Map();
 
-  const KIND_LABEL = {student: 'طالب', teacher: 'أستاذ', circle: 'حلقة'};
+  const KIND_LABEL = { student: 'طالب', teacher: 'أستاذ', circle: 'حلقة' };
 
   function basketList() { return [...basket.values()]; }
 
@@ -756,12 +744,12 @@
     if (basket.has(key)) return;
     el.classList.add('dn-trashed');
     el.dataset.trashKey = key;
-    const item = {key, kind, id, name, el, students: 0};
+    const item = { key, kind, id, name, el, students: 0 };
     basket.set(key, item);
     if (kind === 'circle') {
       // تأكيد صريح: كم طالباً سيُحذف مع الحلقة (يُطلب قبل الحذف النهائي)
       try {
-        const info = await post(CIRCLE_INFO_URL, {circle_id: id}, {label: 'تفاصيل الحلقة'});
+        const info = await post(CIRCLE_INFO_URL, { circle_id: id }, { label: 'تفاصيل الحلقة' });
         item.students = info.circle.students;
       } catch (e) { /* يبقى 0 */ }
       // امسح الحلقة بصرياً: بطاقاتها تصبح شبه شفافة
@@ -787,7 +775,7 @@
     [...basket.keys()].forEach(restore);
   }
 
-  async function commitBasket({force} = {}) {
+  async function commitBasket({ force } = {}) {
     if (basket.size === 0) return true;
     const items = basketList();
     const circles = items.filter(i => i.kind === 'circle');
@@ -806,7 +794,7 @@
     items.forEach(i => { (groups[i.kind] = groups[i.kind] || []).push(i.id); });
     try {
       for (const kind of Object.keys(groups)) {
-        await post(DELETE_URL, {kind, ids: groups[kind].join(',')}, {label: 'حذف ' + KIND_LABEL[kind]});
+        await post(DELETE_URL, { kind, ids: groups[kind].join(',') }, { label: 'حذف ' + KIND_LABEL[kind] });
       }
       // إزالة العناصر من الصفحة نهائياً
       items.forEach(i => {
@@ -855,7 +843,7 @@
   document.getElementById('dn-trash-exec').addEventListener('click', async () => {
     const btn = document.getElementById('dn-trash-exec');
     btn.disabled = true;
-    try { await commitBasket({force: false}); } finally { btn.disabled = false; }
+    try { await commitBasket({ force: false }); } finally { btn.disabled = false; }
   });
 
   /* إظهار/إخفاء وسوم السبر */
@@ -881,7 +869,7 @@
     });
     cols().forEach(col => col.classList.toggle('is-dim', !!words.length && !col.querySelector('.is-hit')));
     setStatus(words.length ? (hits ? `${hits} نتيجة` : 'لا توجد نتائج') : '');
-    if (first) first.scrollIntoView({block: 'center', behavior: 'smooth'});
+    if (first) first.scrollIntoView({ block: 'center', behavior: 'smooth' });
   });
 
   /* مؤشرات أولية */

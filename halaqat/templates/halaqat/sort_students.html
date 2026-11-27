@@ -2,7 +2,11 @@
 {% load static %}
 {% block title %}فرز الطلاب — مسجد طه{% endblock %}
 {% block content %}
-<style>.page-wrap{max-width:none}</style>
+<style>
+  .page-wrap {
+    max-width: none
+  }
+</style>
 
 <a href="{% url 'admin_panel' %}#sort" class="back-link">→ رجوع للوحة التحكم</a>
 
@@ -24,7 +28,8 @@
   <button type="button" class="btn-secondary" id="dn-undo" disabled>↩ تراجع</button>
   <button type="button" class="btn-secondary" id="dn-sabr-toggle">📝 إخفاء السبر</button>
   <button type="button" class="btn-secondary" id="dn-add-toggle">＋ إضافة</button>
-  <span class="dn-status" id="dn-status" data-default="{{ total_students }} طالب في {{ boards|length }} حلقة">{{ total_students }} طالب في {{ boards|length }} حلقة</span>
+  <span class="dn-status" id="dn-status" data-default="{{ total_students }} طالب في {{ boards|length }} حلقة">{{
+    total_students }} طالب في {{ boards|length }} حلقة</span>
 </div>
 
 {# إضافة سريعة: طالب / أستاذ / حلقة — بلا مغادرة الصفحة #}
@@ -61,12 +66,13 @@
   <b>أسهل طريقة وأضمنها:</b> انقر البطاقة مرة (تُضاء) ثم انقر الحاوية التي تريدها — يعمل بالماوس واللمس.<br>
   أو بالماوس: اسحب البطاقة من أي مكان. باللمس: اسحب من المقبض <b>⠿</b> أو اضغط مطوّلاً ثم اسحب.<br>
   الدائرة الملوّنة بجانب كل اسم = <b>نسبة حضوره</b> في آخر شهر (أخضر 100% ← أصفر ← أحمر 0%).<br>
-  زر <b>✕</b> يضع العنصر في <b>سلة الحذف</b> 🗑 (يفتحها زر السلة في الشريط العلوي) — الحذف يُثبَّت بتأكيدك أو عند مغادرة الصفحة.
+  زر <b>✕</b> يضع العنصر في <b>سلة الحذف</b> 🗑 (يفتحها زر السلة في الشريط العلوي) — الحذف يُثبَّت بتأكيدك أو عند مغادرة
+  الصفحة.
 </div>
 
 {# ───────── سلة الحذف: تُملأ بضغط ✕، ولا يُحذف شيء قبل التأكيد ───────── #}
 <div class="dn-trash" id="dn-trash" hidden data-delete-url="{% url 'sort_students_delete' %}"
-     data-circle-info-url="{% url 'sort_students_circle_info' %}">
+  data-circle-info-url="{% url 'sort_students_circle_info' %}">
   <div class="dn-trash-head">
     <b>🗑 سلة الحذف</b>
     <span id="dn-trash-count">0</span>
@@ -75,77 +81,83 @@
     <button type="button" class="dn-trash-close" id="dn-trash-close" title="إغلاق السلة">✕</button>
   </div>
   <div class="dn-trash-body" id="dn-trash-body"></div>
-  <div class="dn-trash-note">العناصر هنا <b>لم تُحذف بعد</b> — تُحذف عند الضغط على «حفظ الحذف نهائياً» أو عند مغادرة الصفحة.</div>
+  <div class="dn-trash-note">العناصر هنا <b>لم تُحذف بعد</b> — تُحذف عند الضغط على «حفظ الحذف نهائياً» أو عند مغادرة
+    الصفحة.</div>
 </div>
 
-<div class="dn-board" id="dn-board"
-     data-move-url="{% url 'sort_students_move' %}"
-     data-add-url="{% url 'sort_students_add' %}"
-     data-teacher-move-url="{% url 'sort_students_teacher_move' %}"
-     data-delete-url="{% url 'sort_students_delete' %}"
-     data-circle-info-url="{% url 'sort_students_circle_info' %}"
-     data-parked-count="{{ total_parked }}">
+<div class="dn-board" id="dn-board" data-move-url="{% url 'sort_students_move' %}"
+  data-add-url="{% url 'sort_students_add' %}" data-teacher-move-url="{% url 'sort_students_teacher_move' %}"
+  data-delete-url="{% url 'sort_students_delete' %}" data-circle-info-url="{% url 'sort_students_circle_info' %}"
+  data-parked-count="{{ total_parked }}">
 
   {# ───────── الشبكة: أربع حلقات في الصف + الحاوية الفارغة عموداً خامساً ───────── #}
   <div class="dn-cols" id="dn-cols">
-  {% for b in boards %}
-  <section class="dn-col{% if b.students %} has-cards{% endif %}" data-circle="{{ b.circle.id }}" data-name="{{ b.circle.name }}">
-    <header class="dn-head">
-      <div class="dn-head-txt">
-        <div class="dn-title">{{ b.circle.name }}</div>
-        <div class="dn-teacher">
-          {% if b.circle.teacher %}{{ b.circle.teacher.name }}{% else %}بلا أستاذ{% endif %}
-          {% if b.circle.substitute_teacher %}<span class="dn-subtag{% if b.sub_active %} now{% endif %}"
-            title="أستاذ بديل{% if b.circle.substitute_date %} ليوم {{ b.circle.substitute_date }}{% endif %}">بديل: {{ b.circle.substitute_teacher.name }}</span>{% endif %}
+    {% for b in boards %}
+    <section class="dn-col{% if b.students %} has-cards{% endif %}" data-circle="{{ b.circle.id }}"
+      data-name="{{ b.circle.name }}">
+      <header class="dn-head">
+        <div class="dn-head-txt">
+          <div class="dn-title">{{ b.circle.name }}</div>
+          <div class="dn-teacher">
+            {% if b.circle.teacher %}{{ b.circle.teacher.name }}{% else %}بلا أستاذ{% endif %}
+            {% if b.circle.substitute_teacher %}<span class="dn-subtag{% if b.sub_active %} now{% endif %}"
+              title="أستاذ بديل{% if b.circle.substitute_date %} ليوم {{ b.circle.substitute_date }}{% endif %}">بديل:
+              {{ b.circle.substitute_teacher.name }}</span>{% endif %}
+          </div>
         </div>
-      </div>
-      <span class="dn-count" data-count>{{ b.students|length }}</span>
-      <button type="button" class="dn-addone" data-add-student-circle="{{ b.circle.id }}"
-              title="إضافة طالب إلى هذه الحلقة">＋</button>
-      <button type="button" class="dn-del" data-del-circle="{{ b.circle.id }}" data-name="{{ b.circle.name }}"
-              title="حذف هذه الحلقة (وطلابها) — تنتقل إلى سلة الحذف">✕</button>
-    </header>
+        <span class="dn-count" data-count>{{ b.students|length }}</span>
+        <button type="button" class="dn-addone" data-add-student-circle="{{ b.circle.id }}"
+          title="إضافة طالب إلى هذه الحلقة">＋</button>
+        <button type="button" class="dn-del" data-del-circle="{{ b.circle.id }}" data-name="{{ b.circle.name }}"
+          title="حذف هذه الحلقة (وطلابها) — تنتقل إلى سلة الحذف">✕</button>
+      </header>
 
-    {# بطاقة الأستاذ: تُنقل فقط (إلى حلقة أخرى أو الحاوية الفارغة) #}
-    {% if b.circle.teacher %}
-    <div class="dn-teacher-card" data-kind="teacher" data-teacher="{{ b.circle.teacher.id }}" data-name="{{ b.circle.teacher.name }}">
-      <span class="dn-tgrip" aria-hidden="true">⠿</span>
-      <span class="dn-tname">👨‍🏫 {{ b.circle.teacher.name }}</span>
-      <span class="dn-trole">أستاذ الحلقة</span>
-      <button type="button" class="dn-tdel" data-out-teacher="{{ b.circle.teacher.id }}" data-name="{{ b.circle.teacher.name }}"
-              title="إخراج الأستاذ من الحلقة → الحاوية الفارغة (يصبح بلا حلقة)">✕</button>
-    </div>
-    {% endif %}
-
-    <div class="dn-list" data-list>
-      {% for s in b.students %}
-      <div class="dn-card" data-kind="student" data-student="{{ s.id }}" data-name="{{ s.name }}">
-        <span class="dn-grip" aria-hidden="true">⠿</span>
-        <span class="dn-ring" data-ring style="--rate:{{ s.grade.rate|default_if_none:0 }};--ring:{{ s.grade.ring }};--ink:{{ s.grade.ink }}"
-              title="نسبة الحضور آخر شهر: {% if s.grade.rate is None %}{{ s.grade.label }}{% else %}{{ s.grade.rate }}%{% endif %}">
-          <span class="dn-ring-txt">{% if s.grade.rate is None %}{{ s.grade.label }}{% else %}{{ s.grade.rate }}<i>%</i>{% endif %}</span>
-        </span>
-        <span class="dn-name">{{ s.name }}{% if s.grade.is_new %}<span class="new-badge" title="لا يملك سجلات قبل بداية الشهر — فهو جديد">جديد</span>{% endif %}</span>
-        {% if s.last_page %}<span class="mini-tag page" title="آخر صفحة مسمّعة">ص {{ s.last_page }}</span>{% endif %}
-        {% if s.birth_year %}<span class="mini-tag birth" title="سنة الميلاد">{{ s.birth_year }}</span>{% endif %}
-        <span class="mini-tag sabr{% if not s.sabr %} none{% endif %} dn-sabr-tag"
-              data-sabr="{% if s.sabr %}{{ s.sabr.count }}{% else %}0{% endif %}"
-              title="{% if s.sabr %}آخر سبر: {{ s.sabr.date }}{% if s.sabr.notes %} — {{ s.sabr.notes }}{% endif %} ({{ s.sabr.count }} سبر){% else %}لا سبر مسجّل{% endif %}">
-          {% if s.sabr %}{% if s.sabr.days == 0 %}سبر اليوم{% elif s.sabr.days == 1 %}سبر أمس{% else %}سبر {{ s.sabr.days }}ي{% endif %}{% else %}بلا سبر{% endif %}
-        </span>
-        <button type="button" class="dn-del" data-del-student="{{ s.id }}" data-name="{{ s.name }}"
-                title="وضع في سلة الحذف">✕</button>
+      {# بطاقة الأستاذ: تُنقل فقط (إلى حلقة أخرى أو الحاوية الفارغة) #}
+      {% if b.circle.teacher %}
+      <div class="dn-teacher-card" data-kind="teacher" data-teacher="{{ b.circle.teacher.id }}"
+        data-name="{{ b.circle.teacher.name }}">
+        <span class="dn-tgrip" aria-hidden="true">⠿</span>
+        <span class="dn-tname">👨‍🏫 {{ b.circle.teacher.name }}</span>
+        <span class="dn-trole">أستاذ الحلقة</span>
+        <button type="button" class="dn-tdel" data-out-teacher="{{ b.circle.teacher.id }}"
+          data-name="{{ b.circle.teacher.name }}"
+          title="إخراج الأستاذ من الحلقة → الحاوية الفارغة (يصبح بلا حلقة)">✕</button>
       </div>
-      {% endfor %}
-      <div class="dn-empty">اسحب طلاباً إلى هنا</div>
-    </div>
-    <div class="dn-quickadd" data-quickadd>
-      <button type="button" class="dn-quickadd-btn" data-add-student-circle="{{ b.circle.id }}">➕ طالب</button>
-    </div>
-  </section>
-  {% empty %}
-  <div class="empty-state">لا توجد حلقات بعد.</div>
-  {% endfor %}
+      {% endif %}
+
+      <div class="dn-list" data-list>
+        {% for s in b.students %}
+        <div class="dn-card" data-kind="student" data-student="{{ s.id }}" data-name="{{ s.name }}">
+          <span class="dn-grip" aria-hidden="true">⠿</span>
+          <span class="dn-ring" data-ring
+            style="--rate:{{ s.grade.rate|default_if_none:0 }};--ring:{{ s.grade.ring }};--ink:{{ s.grade.ink }}"
+            title="نسبة الحضور آخر شهر: {% if s.grade.rate is None %}{{ s.grade.label }}{% else %}{{ s.grade.rate }}%{% endif %}">
+            <span class="dn-ring-txt">{% if s.grade.rate is None %}{{ s.grade.label }}{% else %}{{ s.grade.rate
+              }}<i>%</i>{% endif %}</span>
+          </span>
+          <span class="dn-name">{{ s.name }}{% if s.grade.is_new %}<span class="new-badge"
+              title="لا يملك سجلات قبل بداية الشهر — فهو جديد">جديد</span>{% endif %}</span>
+          {% if s.last_page %}<span class="mini-tag page" title="آخر صفحة مسمّعة">ص {{ s.last_page }}</span>{% endif %}
+          {% if s.birth_year %}<span class="mini-tag birth" title="سنة الميلاد">{{ s.birth_year }}</span>{% endif %}
+          <span class="mini-tag sabr{% if not s.sabr %} none{% endif %} dn-sabr-tag"
+            data-sabr="{% if s.sabr %}{{ s.sabr.count }}{% else %}0{% endif %}"
+            title="{% if s.sabr %}آخر سبر: {{ s.sabr.date }}{% if s.sabr.notes %} — {{ s.sabr.notes }}{% endif %} ({{ s.sabr.count }} سبر){% else %}لا سبر مسجّل{% endif %}">
+            {% if s.sabr %}{% if s.sabr.days == 0 %}سبر اليوم{% elif s.sabr.days == 1 %}سبر أمس{% else %}سبر {{
+            s.sabr.days }}ي{% endif %}{% else %}بلا سبر{% endif %}
+          </span>
+          <button type="button" class="dn-del" data-del-student="{{ s.id }}" data-name="{{ s.name }}"
+            title="وضع في سلة الحذف">✕</button>
+        </div>
+        {% endfor %}
+        <div class="dn-empty">اسحب طلاباً إلى هنا</div>
+      </div>
+      <div class="dn-quickadd" data-quickadd>
+        <button type="button" class="dn-quickadd-btn" data-add-student-circle="{{ b.circle.id }}">➕ طالب</button>
+      </div>
+    </section>
+    {% empty %}
+    <div class="empty-state">لا توجد حلقات بعد.</div>
+    {% endfor %}
   </div>{# /dn-cols #}
 
   {# ───────── الحاوية الفارغة: العمود الخامس بطول الصفحة — طلاب وكوادر بلا حلقة ───────── #}
@@ -173,19 +185,23 @@
       {% for s in parked %}
       <div class="dn-card dn-card-park" data-kind="student" data-student="{{ s.id }}" data-name="{{ s.name }}">
         <span class="dn-grip" aria-hidden="true">⠿</span>
-        <span class="dn-ring" data-ring style="--rate:{{ s.grade.rate|default_if_none:0 }};--ring:{{ s.grade.ring }};--ink:{{ s.grade.ink }}"
-              title="نسبة الحضور آخر شهر: {% if s.grade.rate is None %}{{ s.grade.label }}{% else %}{{ s.grade.rate }}%{% endif %}">
-          <span class="dn-ring-txt">{% if s.grade.rate is None %}{{ s.grade.label }}{% else %}{{ s.grade.rate }}<i>%</i>{% endif %}</span>
+        <span class="dn-ring" data-ring
+          style="--rate:{{ s.grade.rate|default_if_none:0 }};--ring:{{ s.grade.ring }};--ink:{{ s.grade.ink }}"
+          title="نسبة الحضور آخر شهر: {% if s.grade.rate is None %}{{ s.grade.label }}{% else %}{{ s.grade.rate }}%{% endif %}">
+          <span class="dn-ring-txt">{% if s.grade.rate is None %}{{ s.grade.label }}{% else %}{{ s.grade.rate
+            }}<i>%</i>{% endif %}</span>
         </span>
-        <span class="dn-name">{{ s.name }}{% if s.grade.is_new %}<span class="new-badge" title="لا يملك سجلات قبل بداية الشهر — فهو جديد">جديد</span>{% endif %}</span>
+        <span class="dn-name">{{ s.name }}{% if s.grade.is_new %}<span class="new-badge"
+            title="لا يملك سجلات قبل بداية الشهر — فهو جديد">جديد</span>{% endif %}</span>
         {% if s.last_page %}<span class="mini-tag page" title="آخر صفحة مسمّعة">ص {{ s.last_page }}</span>{% endif %}
         <span class="mini-tag sabr{% if not s.sabr %} none{% endif %} dn-sabr-tag"
-              data-sabr="{% if s.sabr %}{{ s.sabr.count }}{% else %}0{% endif %}"
-              title="{% if s.sabr %}آخر سبر: {{ s.sabr.date }}{% if s.sabr.notes %} — {{ s.sabr.notes }}{% endif %}{% else %}لا سبر مسجّل{% endif %}">
-          {% if s.sabr %}{% if s.sabr.days == 0 %}سبر اليوم{% elif s.sabr.days == 1 %}سبر أمس{% else %}سبر {{ s.sabr.days }}ي{% endif %}{% else %}بلا سبر{% endif %}
+          data-sabr="{% if s.sabr %}{{ s.sabr.count }}{% else %}0{% endif %}"
+          title="{% if s.sabr %}آخر سبر: {{ s.sabr.date }}{% if s.sabr.notes %} — {{ s.sabr.notes }}{% endif %}{% else %}لا سبر مسجّل{% endif %}">
+          {% if s.sabr %}{% if s.sabr.days == 0 %}سبر اليوم{% elif s.sabr.days == 1 %}سبر أمس{% else %}سبر {{
+          s.sabr.days }}ي{% endif %}{% else %}بلا سبر{% endif %}
         </span>
         <button type="button" class="dn-del" data-del-student="{{ s.id }}" data-name="{{ s.name }}"
-                title="وضع في سلة الحذف">✕</button>
+          title="وضع في سلة الحذف">✕</button>
       </div>
       {% endfor %}
       <div class="dn-empty">ضع هنا الطلاب والكوادر مؤقتاً</div>
@@ -197,7 +213,8 @@
     </div>
 
     <div class="dn-park-warn{% if not parked %} ok{% endif %}" id="dn-park-warn">
-      {% if parked %}⚠️ الحاوية غير فارغة — وزّع الطلاب على الحلقات قبل مغادرة الصفحة{% else %}✅ الحاوية فارغة{% endif %}
+      {% if parked %}⚠️ الحاوية غير فارغة — وزّع الطلاب على الحلقات قبل مغادرة الصفحة{% else %}✅ الحاوية فارغة{% endif
+      %}
     </div>
   </section>
 </div>
@@ -207,5 +224,5 @@
   🗑 <span id="dn-trash-fab-n">0</span>
 </button>
 
-<script src="{% static 'halaqat/js/sort_students.js' %}?v=8"></script>
+<script src="{% static 'halaqat/js/sort_students.js' %}?v=9"></script>
 {% endblock %}
