@@ -464,12 +464,12 @@
       '<span class="dn-ring-txt">جديد</span></span><span class="dn-name"></span>';
     const nm = el.querySelector('.dn-name');
     nm.textContent = s.name;
-    // الطالب المُضاف الآن لا يملك سجلات لشهر كامل ⇒ تظهر «جديد»
+    // الطالب المُضاف الآن بلا سجلات قبل الشهر ⇒ تظهر «جديد»
     if (s.is_new !== false) {
       const b = document.createElement('span');
       b.className = 'new-badge';
       b.textContent = 'جديد';
-      b.title = 'لم يكمل شهراً من السجلات بعد';
+      b.title = 'لا يملك سجلات قبل بداية الشهر — فهو جديد';
       nm.appendChild(b);
     }
     const x = document.createElement('button');

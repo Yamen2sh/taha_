@@ -1074,7 +1074,7 @@ def _attendance_color_grade(student, today=None, days=30):
     """
     تدرّج لون الطالب حسب نسبة حضوره في آخر شهر (30 يوماً):
 
-      • «جديد» — عمره في الحلقة أقل من شهر، أو لا توجد أي أيام مسجَّلة له بعد.
+      • «جديد» — لا يملك أي سجل حضور **قبل** بداية الشهر (أي قبل شهر من الآن).
         (لون نقطة مميّز: بنفسجي) — لا يُحسب له تدرّج.
       • وإلا فالنسبة = (حاضر + متأخر) ÷ (المسجَّل − بإذن):
           100–60%  → أصفر (سليم)
@@ -1095,21 +1095,15 @@ def _attendance_color_grade(student, today=None, days=30):
     sessions = sum(tally.values())
     counted = sessions - excused
 
-    is_new = False
-    if joined is not None:
-        try:
-            if (today - timezone.localtime(joined).date()).days < days:
-                is_new = True
-        except Exception:
-            pass
-    if counted == 0:
-        is_new = True
+    # «جديد» = لا يملك أي سجل **قبل** بداية الشهر (لا يُنظر إلى تاريخ انضمامه).
+    has_old = Attendance.objects.filter(student=student, date__lt=start).exists()
+    is_new = not has_old
 
     if is_new:
         return {'grade': 'new', 'rate': None, 'label': 'جديد', 'color': '#7A5AA8',
                 'is_new': True, 'sessions': sessions, 'attended': attended}
 
-    rate = round(attended * 100 / counted)
+    rate = round(attended * 100 / counted) if counted else 0
     if rate >= 60:
         grade, label, color = 'yellow', 'منتظم', '#E0B33A'
     elif rate >= 40:
@@ -2971,36 +2965,31 @@ def sort_students_page(request):
     # نسبة الحضور في آخر شهر لكل طالب (استعلام واحد) — للتدريج اللوني
     from datetime import timedelta
     month_start = timezone.localdate() - timedelta(days=29)
-    # أول تاريخ سجل لكل طالب — لتحديد من يملك «شهراً كاملاً» من السجلات
-    from django.db.models import Min
-    first_seen = dict(Attendance.objects.order_by()
-                      .values('student_id').annotate(first=Min('date'))
-                      .values_list('student_id', 'first'))
+    # من يملك سجلات **قبل** بداية الشهر → ليس جديداً. الباقي جديد.
+    old_records = set(Attendance.objects.filter(date__lt=month_start)
+                      .values_list('student_id', flat=True))
     tally = {}
     for sid, st, n in (Attendance.objects.filter(date__gte=month_start).order_by()
                        .values('student_id', 'status').annotate(n=Count('id'))
                        .values_list('student_id', 'status', 'n')):
         tally.setdefault(sid, {})[st] = n
 
-    def grade_of(sid, joined):
+    def grade_of(sid, joined=None):
         """
         تدريج اللون حسب حضور آخر شهر (100% أخضر تام ← 0% أحمر تام).
 
-        شارة «جديد» تبقى أمام الطالب ما دام **لا يملك سجلات لشهر كامل**: لا سجلات
-        إطلاقاً، أو أقدم سجل عنده لم يتجاوز 30 يوماً (ومن لا سجلات له يُحسب من
-        تاريخ انضمامه). بعد شهر كامل من السجلات تختفي الكلمة وتبقى النسبة وحدها.
+        **القاعدة:** أي طالب **لا يملك سجلات قبل شهر من الآن** فهو «جديد»
+        (لا يُنظر إلى تاريخ انضمامه). من لديه سجلات قديمة تُعرض نسبته دائماً،
+        و0% إن لم يحضر خلال الشهر.
         """
         t = tally.get(sid, {})
         attended = t.get('present', 0) + t.get('late', 0)
         counted = sum(t.values()) - t.get('excused', 0)
-        # هل يملك شهراً كاملاً من السجلات؟ (أقدم سجل، أو تاريخ الانضمام إن لا سجلات)
-        start = first_seen.get(sid) or joined
-        is_new = start is None or (timezone.localdate() - start).days < 30
-        if counted == 0:
-            return {'grade': 'new', 'rate': None, 'is_new': is_new,
-                    'label': 'جديد' if is_new else 'بلا سجلات',
+        is_new = sid not in old_records
+        if is_new:
+            return {'grade': 'new', 'rate': None, 'is_new': True, 'label': 'جديد',
                     'color': '#7A5AA8', 'ring': '#7A5AA8', 'ink': '#4d3471'}
-        rate = round(attended * 100 / counted)
+        rate = round(attended * 100 / counted) if counted else 0
         if rate >= 90:
             return {'grade': 'g90', 'rate': rate, 'is_new': is_new, 'label': 'ممتاز',
                     'color': '#2E7D46', 'ring': '#2E7D46', 'ink': '#1f5530'}
@@ -3047,7 +3036,7 @@ def sort_students_page(request):
                 'birth_year': birth.year if birth else None,
                 'parked': parked_at is not None,
                 'sabr': sabr_of(sid),
-                'grade': grade_of(sid, timezone.localtime(joined).date() if joined else None)}
+                'grade': grade_of(sid)}
         total += 1
         if parked_at is not None:
             parked.append(card)
