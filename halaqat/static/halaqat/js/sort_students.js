@@ -36,8 +36,10 @@
     : fetch(url, {method: 'POST', headers: {'X-CSRFToken': getCsrf(), 'X-Requested-With': 'XMLHttpRequest'},
                   body: new URLSearchParams(data).toString()}).then(r => r.json());
 
-  const cols = () => [...board.querySelectorAll('.dn-col')];
-  const colById = id => board.querySelector('.dn-col[data-circle="' + id + '"]');
+  // «حاوية» = أي عمود قابل للإفلات: حلقة (.dn-col) أو الحاوية الفارغة (.dn-park)
+  const COL_SEL = '.dn-col, .dn-park';
+  const cols = () => [...board.querySelectorAll(COL_SEL)];
+  const colById = id => board.querySelector('[data-circle="' + id + '"].dn-col, [data-circle="' + id + '"].dn-park');
   const listOf = col => col.querySelector('[data-list]');
   const nameOf = col => col.dataset.name;
   const stdName = card => card.dataset.name;
@@ -144,7 +146,7 @@
     const card = board.querySelector('.dn-card[data-student="' + m.id + '"]');
     const to = colById(m.fromCircle);
     if (!card || !to) return;
-    const ok = await doMove(card, card.closest('.dn-col'), to, true);
+    const ok = await doMove(card, card.closest(COL_SEL), to, true);
     if (!ok) { undoStack.push(m); syncUndo(); }
   }
   $undo.addEventListener('click', undo);
@@ -202,7 +204,7 @@
 
   const colAt = (x, y) => {
     const el = document.elementFromPoint(x, y);
-    return el ? el.closest('.dn-col') : null;
+    return el ? el.closest(COL_SEL) : null;
   };
 
   function place(d) {
@@ -277,7 +279,7 @@
      السحب هنا = نقل: إلى حلقة أخرى (يصبح أستاذها) أو إلى الحاوية الفارغة (بلا حلقة). */
   async function moveTeacher(tcard, toCol) {
     const tid = tcard.dataset.teacher, tname = tcard.dataset.name;
-    const fromCol = tcard.closest('.dn-col');
+    const fromCol = tcard.closest(COL_SEL);
     const toPark = isPark(toCol);
     if (fromCol === toCol) return;
     if (toPark) {
@@ -356,7 +358,7 @@
     const onGrip = !!e.target.closest('.dn-grip, .dn-tgrip');
     drag = {
       card, kind: tcard ? 'teacher' : 'student',
-      from: card.closest('.dn-col'), pid: e.pointerId, type: e.pointerType,
+      from: card.closest(COL_SEL), pid: e.pointerId, type: e.pointerType,
       sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY,
       ox: 0, oy: 0, active: false, timer: null, ghost: null, over: null, raf: 0,
     };
@@ -669,13 +671,13 @@
       }
       // إزالة العناصر من الصفحة نهائياً
       items.forEach(i => {
-        const col = i.el.closest('.dn-col');
+        const col = i.el.closest(COL_SEL);
         i.el.remove();
         if (col) recount(col);
       });
       // إن حُذفت حلقات: أزل أعمدةها، وحرّك طلابها المحذوفين
       circles.forEach(c => {
-        const col = document.querySelector('.dn-col[data-circle="' + c.id + '"]');
+        const col = board.querySelector('[data-circle="' + c.id + '"].dn-col, [data-circle="' + c.id + '"].dn-park');
         if (col) col.remove();
       });
       basket.clear();
@@ -699,7 +701,7 @@
       const card = st.closest('.dn-card');
       addToBasket('student', st.dataset.delStudent, card.dataset.name, card);
     } else if (ci) {
-      const col = ci.closest('.dn-col');
+      const col = ci.closest(COL_SEL);
       addToBasket('circle', ci.dataset.delCircle, ci.dataset.name, col);
     } else if (out) {
       // الأستاذ لا يُحذف من هنا: ✕ = إخراجه من الحلقة إلى الحاوية الفارغة (يصبح بلا حلقة)
