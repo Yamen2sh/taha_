@@ -427,32 +427,70 @@
   });
 
   /* ── إضافة سريعة من الحاوية الفارغة (طالب/أستاذ) بلا فتح شريط الإضافة ── */
-  document.addEventListener('click', async e => {
+  /* إضافة مباشرة داخل الحاوية: نُظهر حقلاً صغيراً مكان الزر بدل نافذة prompt
+     (بعض المتصفحات/الإضافات تحجب prompt، وكانت الإضافة تبدو معطّلة). */
+  function inlineAdd(btn, {kind, label, circleId}) {
+    if (btn.disabled || btn.closest('.dn-inline-add')) return;
+    const box = document.createElement('div');
+    box.className = 'dn-inline-add';
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.placeholder = label;
+    inp.setAttribute('aria-label', label);
+    const ok = document.createElement('button');
+    ok.type = 'button'; ok.className = 'dn-inline-ok'; ok.textContent = 'إضافة';
+    const no = document.createElement('button');
+    no.type = 'button'; no.className = 'dn-inline-no'; no.textContent = '✕'; no.title = 'إلغاء';
+    box.append(inp, ok, no);
+    btn.parentNode.insertBefore(box, btn);
+    btn.hidden = true;
+    inp.focus();
+
+    const close = () => { box.remove(); btn.hidden = false; };
+    no.addEventListener('click', close);
+    inp.addEventListener('keydown', ev => {
+      if (ev.key === 'Escape') close();
+      if (ev.key === 'Enter') { ev.preventDefault(); submit(); }
+    });
+
+    async function submit() {
+      const name = inp.value.trim();
+      if (!name) { inp.focus(); return; }
+      ok.disabled = true; inp.disabled = true;
+      try {
+        const body = {kind, name};
+        if (kind === 'student') body.circle_id = circleId;
+        const data = await post(ADD_URL, body, {label: 'إضافة ' + name});
+        if (kind === 'student') addStudentCard(data.student, circleId);
+        else addTeacherCard(data.teacher);
+        toast('✅ أُضيف «' + name + '»', 'success');
+        setStatus('✅ أُضيف «' + name + '»');
+        close();
+      } catch (err) {
+        toast('❌ ' + (err.message || 'تعذّرت الإضافة'), 'error');
+        ok.disabled = false; inp.disabled = false; inp.focus();
+      }
+    }
+    ok.addEventListener('click', submit);
+  }
+
+  document.addEventListener('click', e => {
     const stBtn = e.target.closest('[data-add-student-circle]');
     if (stBtn) {
-      const circleId = stBtn.dataset.addStudentCircle;
-      const name = (prompt('اسم الطالب الجديد:') || '').trim();
-      if (!name) return;
-      stBtn.disabled = true;
-      try {
-        const data = await post(ADD_URL, {kind: 'student', name, circle_id: circleId}, {label: 'إضافة ' + name});
-        addStudentCard(data.student, circleId);
-        toast('✅ أُضيف «' + name + '»', 'success');
-      } catch (err) { toast('❌ ' + (err.message || 'تعذّرت الإضافة'), 'error'); }
-      finally { stBtn.disabled = false; }
+      inlineAdd(stBtn, {kind: 'student', label: 'اسم الطالب…', circleId: stBtn.dataset.addStudentCircle});
       return;
     }
     const tBtn = e.target.closest('[data-add-teacher]');
     if (tBtn) {
-      const name = (prompt('اسم الأستاذ/الكادر الجديد:') || '').trim();
-      if (!name) return;
-      tBtn.disabled = true;
-      try {
-        const data = await post(ADD_URL, {kind: 'teacher', name}, {label: 'إضافة ' + name});
-        addTeacherCard(data.teacher);
-        toast('✅ أُضيف «' + name + '»', 'success');
-      } catch (err) { toast('❌ ' + (err.message || 'تعذّرت الإضافة'), 'error'); }
-      finally { tBtn.disabled = false; }
+      inlineAdd(tBtn, {kind: 'teacher', label: 'اسم الأستاذ/الكادر…'});
+    }
+  });
+
+  /* زر «＋ إضافة» في الشريط: يفتح شريط الإضافة ويُركّز على اسم الطالب */
+  $addToggle.addEventListener('click', () => {
+    if (!$addbar.hidden) {
+      const f = $addbar.querySelector('.dn-addform[data-kind="student"] [name="name"]');
+      if (f) f.focus();
     }
   });
 
