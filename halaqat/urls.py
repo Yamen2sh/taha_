@@ -73,6 +73,9 @@ urlpatterns = [
     path('admin-panel/sort-students/', views.sort_students_page, name='sort_students'),
     path('admin-panel/sort-students/move/', views.sort_students_move, name='sort_students_move'),
     path('admin-panel/sort-students/add/', views.sort_students_add, name='sort_students_add'),
+    path('admin-panel/sort-students/teacher-move/', views.sort_students_teacher_move, name='sort_students_teacher_move'),
+    path('admin-panel/sort-students/delete/', views.sort_students_delete, name='sort_students_delete'),
+    path('admin-panel/sort-students/circle-info/', views.sort_students_circle_delete_info, name='sort_students_circle_info'),
 
     # ── ربط كل أستاذ بحلقته (ويسمح بربط مؤقت ليوم واحد) ──
     path('admin-panel/teacher-links/', views.teacher_links_page, name='teacher_links'),
