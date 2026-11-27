@@ -122,7 +122,7 @@
               title="نسبة الحضور آخر شهر: {% if s.grade.rate is None %}{{ s.grade.label }}{% else %}{{ s.grade.rate }}%{% endif %}">
           <span class="dn-ring-txt">{% if s.grade.rate is None %}{{ s.grade.label }}{% else %}{{ s.grade.rate }}<i>%</i>{% endif %}</span>
         </span>
-        <span class="dn-name">{{ s.name }}{% if s.grade.is_new %}<span class="new-badge" title="لم يكمل شهراً من السجلات بعد">جديد</span>{% endif %}</span>
+        <span class="dn-name">{{ s.name }}{% if s.grade.is_new %}<span class="new-badge" title="لا يملك سجلات قبل بداية الشهر — فهو جديد">جديد</span>{% endif %}</span>
         {% if s.last_page %}<span class="mini-tag page" title="آخر صفحة مسمّعة">ص {{ s.last_page }}</span>{% endif %}
         {% if s.birth_year %}<span class="mini-tag birth" title="سنة الميلاد">{{ s.birth_year }}</span>{% endif %}
         <span class="mini-tag sabr{% if not s.sabr %} none{% endif %} dn-sabr-tag"
@@ -176,7 +176,7 @@
               title="نسبة الحضور آخر شهر: {% if s.grade.rate is None %}{{ s.grade.label }}{% else %}{{ s.grade.rate }}%{% endif %}">
           <span class="dn-ring-txt">{% if s.grade.rate is None %}{{ s.grade.label }}{% else %}{{ s.grade.rate }}<i>%</i>{% endif %}</span>
         </span>
-        <span class="dn-name">{{ s.name }}{% if s.grade.is_new %}<span class="new-badge" title="لم يكمل شهراً من السجلات بعد">جديد</span>{% endif %}</span>
+        <span class="dn-name">{{ s.name }}{% if s.grade.is_new %}<span class="new-badge" title="لا يملك سجلات قبل بداية الشهر — فهو جديد">جديد</span>{% endif %}</span>
         {% if s.last_page %}<span class="mini-tag page" title="آخر صفحة مسمّعة">ص {{ s.last_page }}</span>{% endif %}
         <span class="mini-tag sabr{% if not s.sabr %} none{% endif %} dn-sabr-tag"
               data-sabr="{% if s.sabr %}{{ s.sabr.count }}{% else %}0{% endif %}"
