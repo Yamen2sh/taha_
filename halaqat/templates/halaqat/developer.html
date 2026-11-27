@@ -41,7 +41,7 @@
       <b>المطلوب مفتاح واحد فقط:</b> مفتاح Gemini من
       <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:#7A5AA8;font-weight:700">aistudio.google.com/apikey</a>
       ← يُضاف كمتغيّر بيئة <code dir="ltr">GEMINI_API_KEY</code> ويعمل فوراً.
-      العنوان والنموذج لهما قيم افتراضية (<code dir="ltr">gemini-2.5-flash</code>) فلا تحتاج ضبطهما.
+      العنوان والنموذج لهما قيم افتراضية (<code dir="ltr">gemini-flash-latest</code>) فلا تحتاج ضبطهما.
       <br>(يبقى يعمل أيضاً مع أي مزوّد آخر يدعم فتح الدوال: Anthropic · OpenAI · OpenRouter · Groq · Ollama…)
     </div>
 
@@ -79,7 +79,7 @@
         <code dir="ltr" style="font-size:11.5px;font-weight:700;color:#3d4a5c">GEMINI_API_KEY=···</code><br>
         (مقبول أيضاً <code dir="ltr" style="font-size:11px">AI_API_KEY</code> أو <code dir="ltr" style="font-size:11px">GOOGLE_API_KEY</code>).
         العنوان الافتراضي <code dir="ltr" style="font-size:11px">generativelanguage.googleapis.com/v1beta</code>
-        والنموذج <code dir="ltr" style="font-size:11px">gemini-2.5-flash</code> —
+        والنموذج <code dir="ltr" style="font-size:11px">gemini-flash-latest</code> —
         يمكن تغييرهما اختيارياً بـ <code dir="ltr" style="font-size:11px">AI_BASE_URL</code> و<code dir="ltr" style="font-size:11px">AI_MODEL</code>.
       </div>
     </div>
@@ -297,7 +297,8 @@ async function testAI(btn) {
       headers: {'X-CSRFToken': getCsrf(), 'X-Requested-With': 'XMLHttpRequest'},
     });
     const d = await res.json();
-    if (d.ok) showToast('✅ الاتصال ناجح · النموذج ' + d.model, 'success', 5000);
+    if (d.ok) showToast('✅ الاتصال ناجح · النموذج ' + d.model
+      + (d.configured_model && d.configured_model !== d.model ? ' (بدل ' + d.configured_model + ' غير المتاح لمفتاحك)' : ''), 'success', 7000);
     else showToast('❌ ' + (d.error || 'فشل الاختبار'), 'error', 7000);
   } catch (e) { showToast('❌ خطأ في الاتصال', 'error'); }
   finally { setBtnLoading(btn, false); }
@@ -431,7 +432,11 @@ async function listModels(btn) {
     html += '</div>';
     html += ok
       ? '✅ النموذج الحالي <code dir="ltr">' + cur + '</code> متاح — إن استمر خطأ 404 فالمشكلة في <code dir="ltr">AI_BASE_URL</code>.'
-      : '⚠️ النموذج الحالي <code dir="ltr">' + cur + '</code> <b>غير متاح</b> — اضبط <code dir="ltr">AI_MODEL</code> بأحد الأسماء أعلاه.';
+      : '⚠️ النموذج الحالي <code dir="ltr">' + cur + '</code> <b>غير متاح</b> — اضبط <code dir="ltr">AI_MODEL</code> بأحد الأسماء أعلاه'
+        + (d.recommended && d.recommended.length ? ' (الموصى به: <code dir="ltr">' + d.recommended.join('</code> · <code dir="ltr">') + '</code>)' : '') + '.';
+    if (d.in_use && d.in_use !== cur) {
+      html += '<div style="margin-top:6px">🔁 يعمل التطبيق حالياً بالنموذج <code dir="ltr">' + d.in_use + '</code> تلقائياً لأن المضبوط غير متاح لمفتاحك.</div>';
+    }
     html += '<div style="color:#8a94a2;font-size:11px;margin-top:6px" dir="ltr">' + (d.endpoint || '') + '</div>';
     box.innerHTML = html;
     showToast(ok ? '✅ النموذج الحالي متاح' : '⚠️ النموذج الحالي غير متاح', ok ? 'success' : 'warn', 5000);

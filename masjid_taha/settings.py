@@ -223,9 +223,9 @@ LOGOUT_REDIRECT_URL  = 'login'
 # النموذج يستقبل السؤال وأسماء الحلقات فقط (لا بيانات طلاب).
 # عنوان الـ API واسم النموذج لهما قيم افتراضية جاهزة — لا تحتاج ضبطهما إلا إن أردت مزوّداً آخر.
 #   AI_BASE_URL (اختياري)  الافتراضي: https://generativelanguage.googleapis.com/v1beta
-#   AI_MODEL    (اختياري)  الافتراضي: gemini-2.5-flash
+#   AI_MODEL    (اختياري)  الافتراضي: gemini-flash-latest (اسم مستعار لأحدث Flash؛ وعند 404 يُجرَّب غيره تلقائياً)
 _AI_BASE_DEFAULT = 'https://generativelanguage.googleapis.com/v1beta'
-_AI_MODEL_DEFAULT = 'gemini-2.5-flash'
+_AI_MODEL_DEFAULT = 'gemini-flash-latest'
 
 AI_BASE_URL = os.environ.get('AI_BASE_URL') or _AI_BASE_DEFAULT
 AI_MODEL = os.environ.get('AI_MODEL') or _AI_MODEL_DEFAULT

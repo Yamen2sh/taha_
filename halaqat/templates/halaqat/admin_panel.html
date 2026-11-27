@@ -266,7 +266,7 @@
         <label for="{{ whatsapp_form.message.id_for_label }}">نص الرسالة</label>
         {{ whatsapp_form.message }}
       </div>
-      {% if whatsapp_form.errors %}<div class="form-errors">تحقق من الحقول المطلوبة.</div>{% endif %}
+      {% if whatsapp_form.errors %}<div class="form-errors">{% for f in whatsapp_form %}{% for e in f.errors %}{{ e }} {% endfor %}{% endfor %}</div>{% endif %}
       <button type="submit" name="submit_whatsapp_absent" class="btn-primary">إرسال للغائبين</button>
     </form>
     </div>

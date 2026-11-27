@@ -17,7 +17,7 @@ from django.http import JsonResponse, HttpResponse
 from django.urls import reverse
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
-from django.db import connection, transaction
+from django.db import connection, connections, transaction
 from django.db.models import Count
 from django.views.decorators.http import require_POST
 
@@ -172,12 +172,17 @@ def _circles_overview():
         if recorded_students and counted:
             rate = round((present_today / counted) * 100)
 
-        # اكتمال التسجيل: كل الطلاب + الأستاذ (إن وُجد)
+        # اكتمال التسجيل: كل الطلاب + الأستاذ المسؤول اليوم (البديل يوم الربط المؤقت فقط، كما في الرئيسية)
         total = circle['students']
         recorded = recorded_students
-        if circle['teacher']:
+        sub = circle.get('substitute')
+        if sub and sub.get('date') == today.isoformat():
+            teacher_id = sub['id']
+        else:
+            teacher_id = circle['teacher']['id'] if circle['teacher'] else None
+        if teacher_id:
             total += 1
-            if (circle['teacher']['id'], circle['id']) in teacher_done:
+            if (teacher_id, circle['id']) in teacher_done:
                 recorded += 1
         if total == 0:
             card_status = 'empty'
@@ -349,7 +354,10 @@ def save_attendance(request, circle_id):
             defaults={'status': status},
         )
     else:
-        student = get_object_or_404(Student, pk=entity_id, circle=circle)
+        entity_pk = _pk_or_none(entity_id)
+        if entity_pk is None:
+            return JsonResponse({'ok': False, 'error': 'معرّف غير صالح'}, status=400)
+        student = get_object_or_404(Student, pk=entity_pk, circle=circle)
         Attendance.objects.update_or_create(
             student=student, date=selected_date,
             defaults={'circle': circle, 'status': status},
@@ -494,8 +502,12 @@ def save_course_attendance(request, course_id):
     except (ValueError, TypeError):
         return JsonResponse({'ok': False, 'error': 'تاريخ غير صالح'}, status=400)
 
+    entity_pk = _pk_or_none(entity_id)
+    if entity_pk is None:
+        return JsonResponse({'ok': False, 'error': 'معرّف غير صالح'}, status=400)
+
     if kind == 'teacher':
-        teacher = get_object_or_404(Teacher, pk=entity_id)
+        teacher = get_object_or_404(Teacher, pk=entity_pk)
         if not course.teachers.filter(pk=teacher.pk).exists():
             return JsonResponse({'ok': False, 'error': 'لا يوجد أستاذ مطابق لهذه الدورة'}, status=400)
         CourseTeacherAttendance.objects.update_or_create(
@@ -503,7 +515,7 @@ def save_course_attendance(request, course_id):
             defaults={'status': status},
         )
     else:
-        student = get_object_or_404(Student, pk=entity_id)
+        student = get_object_or_404(Student, pk=entity_pk)
         if not course.students.filter(pk=student.pk).exists():
             return JsonResponse({'ok': False, 'error': 'الطالب ليس ضمن هذه الدورة'}, status=400)
         CourseAttendance.objects.update_or_create(
@@ -605,7 +617,10 @@ def save_teacher_attendance_general(request):
     except (ValueError, TypeError):
         return JsonResponse({'ok': False, 'error': 'تاريخ غير صالح'}, status=400)
 
-    teacher = get_object_or_404(Teacher, pk=entity_id)
+    entity_pk = _pk_or_none(entity_id)
+    if entity_pk is None:
+        return JsonResponse({'ok': False, 'error': 'معرّف غير صالح'}, status=400)
+    teacher = get_object_or_404(Teacher, pk=entity_pk)
     linked_circles = teacher.circles.all()
     linked_courses = teacher.courses.all()
 
@@ -644,8 +659,8 @@ def delete_teacher(request, pk):
     return redirect('teachers_list')
 
 
-def _queue_whatsapp_absent_messages(selected_date, circle, message_template):
-    """إرسال رسائل الغياب بشكل متسلسل في خيط منفصل مع تأخير بعد كل نجاح."""
+def _send_whatsapp_absent_messages(selected_date, circle, message_template):
+    """إرسال رسائل الغياب بشكل متسلسل (يُنفَّذ داخل خيط) مع تأخير بعد كل نجاح."""
     records = Attendance.objects.filter(date=selected_date, status='absent')
     if circle:
         records = records.filter(circle=circle)
@@ -658,7 +673,7 @@ def _queue_whatsapp_absent_messages(selected_date, circle, message_template):
     for index, record in enumerate(records):
         student = record.student
         phone = (student.phone or '').strip()
-        if not phone:
+        if not phone or phone in ('-', '—'):          # «-» تضعه أداة «ملء الخانات الفارغة»: رقم ناقص لا فشل
             skipped_names.append(student.name)
             continue
 
@@ -692,6 +707,24 @@ def _queue_whatsapp_absent_messages(selected_date, circle, message_template):
         summary_lines.append(f'⏭ أرقام ناقصة/غير صالحة: {", ".join(skipped_names)}')
 
     send_telegram_message('\n'.join(summary_lines))
+
+
+_WHATSAPP_SEND_LOCK = threading.Lock()      # عملية إرسال واحدة في وقت واحد (يمنع تكرار الرسائل لأولياء الأمور)
+
+
+def _queue_whatsapp_absent_messages(selected_date, circle, message_template):
+    """مدخل الخيط: ينفّذ الإرسال، ويحرّر القفل ويُغلق اتصالات قاعدة البيانات حتى عند الفشل."""
+    try:
+        _send_whatsapp_absent_messages(selected_date, circle, message_template)
+    except Exception:                               # noqa: BLE001 — الخيط لا يملك من يلتقط خطأه
+        logging.getLogger(__name__).exception('فشل إرسال رسائل الغياب عبر واتساب')
+        try:
+            send_telegram_message('❌ تعذّر إكمال إرسال رسائل الغياب عبر واتساب بسبب خطأ غير متوقع (راجع سجلات الخادم).')
+        except Exception:                           # noqa: BLE001
+            pass
+    finally:
+        _WHATSAPP_SEND_LOCK.release()
+        connections.close_all()
 
 
 @login_required
@@ -742,12 +775,18 @@ def admin_panel(request):
                 circle = whatsapp_form.cleaned_data['circle']
                 message_template = whatsapp_form.cleaned_data['message']
 
-                thread = threading.Thread(
-                    target=_queue_whatsapp_absent_messages,
-                    args=(selected_date, circle, message_template),
-                    daemon=True,
-                )
-                thread.start()
+                if not _WHATSAPP_SEND_LOCK.acquire(blocking=False):
+                    messages.warning(request, 'هناك عملية إرسال رسائل جارية الآن؛ انتظر حتى يصلك ملخصها في التلغرام ثم أعد المحاولة.')
+                    return redirect('admin_panel')
+                try:
+                    threading.Thread(
+                        target=_queue_whatsapp_absent_messages,
+                        args=(selected_date, circle, message_template),
+                        daemon=True,
+                    ).start()
+                except Exception:
+                    _WHATSAPP_SEND_LOCK.release()
+                    raise
 
                 messages.success(request, 'تم بدء إرسال الرسائل للغائبين بشكل متسلسل في الخلفية. سيتم إرسال ملخص النتيجة إلى التلغرام عند الانتهاء.')
                 return redirect('admin_panel')
@@ -847,6 +886,14 @@ def delete_student(request, pk):
     return redirect('admin_panel')
 
 
+def _pk_or_none(value):
+    """معرّف رقمي من مُدخل الطلب، أو None إن لم يكن رقماً صحيحاً (بدل ValueError ← خطأ 500)."""
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+
+
 def _parse_date_param(request, param='date'):
     date_str = request.GET.get(param)
     if date_str:
@@ -872,7 +919,7 @@ def _log_admin_action(request, text):
 def absentees_list(request):
     """عرض الطلاب الغائبين (وقسم للطلاب المسجَّلين إذن) في تاريخ محدد، مع إمكانية تعديل الحالة مباشرة."""
     selected_date = _parse_date_param(request)
-    circle_id = request.GET.get('circle')
+    circle_id = _pk_or_none(request.GET.get('circle'))
 
     def build_groups(status):
         records = Attendance.objects.filter(
@@ -913,7 +960,7 @@ def absentees_list(request):
         'total_excused': total_excused,
         'total_late': total_late,
         'circles': Circle.objects.all(),
-        'selected_circle_id': int(circle_id) if circle_id else None,
+        'selected_circle_id': circle_id,
         'active_nav': 'absentees',
     }
     return render(request, 'halaqat/absentees.html', context)
@@ -1051,7 +1098,7 @@ def _attendance_color_grade(student, today=None, days=30):
     is_new = False
     if joined is not None:
         try:
-            if (today - joined.date()).days < days:
+            if (today - timezone.localtime(joined).date()).days < days:
                 is_new = True
         except Exception:
             pass
@@ -1268,7 +1315,7 @@ def teacher_profile(request, teacher_id):
 def export_attendance_csv(request):
     """تصدير سجل الحضور والغياب ليوم محدد (لكل الحلقات أو حلقة واحدة) كملف CSV."""
     selected_date = _parse_date_param(request)
-    circle_id = request.GET.get('circle')
+    circle_id = _pk_or_none(request.GET.get('circle'))
 
     circles = Circle.objects.select_related('teacher').all()
     if circle_id:
@@ -1297,7 +1344,7 @@ def export_attendance_csv(request):
             a.student_id: a.get_status_display()
             for a in Attendance.objects.filter(circle=circle, date=selected_date)
         }
-        for student in circle.students.all():
+        for student in circle.students.filter(parked_at__isnull=True):      # الموضوعون في الحاوية مخفيون من الحضور
             status_display = existing.get(student.id, 'لم يُسجَّل')
             writer.writerow([
                 circle.name,
@@ -1317,7 +1364,7 @@ def export_attendance_csv(request):
 def export_course_attendance_csv(request):
     """تصدير سجل حضور دورة/درس إضافي ليوم محدد كملف CSV."""
     selected_date = _parse_date_param(request)
-    course_id = request.GET.get('course')
+    course_id = _pk_or_none(request.GET.get('course'))
 
     courses = Course.objects.prefetch_related('teachers', 'students').all()
     if course_id:
@@ -1435,7 +1482,7 @@ def send_all_data_telegram(request):
     ):
         ws_students.append([i, s.name, s.circle.name,
                             s.phone or '—', s.notes or '—',
-                            s.joined_at.date().isoformat(),
+                            timezone.localtime(s.joined_at).date().isoformat(),
                             s.birth_date.isoformat() if s.birth_date else '—',
                             s.id, s.circle_id])
 
@@ -2028,10 +2075,15 @@ def developer_ai_models(request):
     if err and not names:
         return JsonResponse({'ok': False, 'error': f'تعذّر جلب النماذج: {err}'}, status=200)
     current = cfg.effective_model()
+    base = cfg.effective_base_url()
+    # الاسم المستعار «-latest» يُحلّ إلى أحدث Flash؛ وقائمة Google قد تُدرج نماذج لا يملك مفتاحك صلاحيتها فعلاً
+    alias_ok = current.endswith('-latest') and any('flash' in n for n in names)
     return JsonResponse({'ok': True, 'models': names, 'current': current,
-                         'current_available': current in names,
-                         'endpoint': ai_query._endpoint(cfg.effective_base_url(), ai_query.provider_kind(cfg.effective_base_url()), current),
-                         'base_url': cfg.effective_base_url()})
+                         'current_available': current in names or alias_ok,
+                         'in_use': ai_query.resolved_model(base, current),
+                         'recommended': ai_query._rank_gemini_models(names)[:3],
+                         'endpoint': ai_query._endpoint(base, ai_query.provider_kind(base), current),
+                         'base_url': base})
 
 
 @superuser_required
@@ -2053,7 +2105,9 @@ def developer_ai_test(request):
                                timeout=25)
     except ai_query.AssistantError as e:
         return JsonResponse({'ok': False, 'code': e.code, 'error': e.message}, status=200)
-    return JsonResponse({'ok': True, 'model': cfg.effective_model(), 'base_url': cfg.effective_base_url(),
+    return JsonResponse({'ok': True,
+                         'model': ai_query.resolved_model(cfg.effective_base_url(), cfg.effective_model()),
+                         'configured_model': cfg.effective_model(), 'base_url': cfg.effective_base_url(),
                          'spec': ai_query.spec_to_json(raw)[:400]})
 
 
@@ -2495,6 +2549,8 @@ def _stats_context(request, top_limit=None, paginate=False):
         except (TypeError, ValueError):
             return None
     age_min, age_max = _int(g.get('age_min')), _int(g.get('age_max'))
+    age_min = None if age_min is None else min(max(age_min, 0), 150)      # قيم ضخمة كانت تُسقط الصفحة (سنة خارج المدى)
+    age_max = None if age_max is None else min(max(age_max, 0), 150)
 
     circles = list(Circle.objects.order_by('display_order', 'name'))
     circle = None
@@ -2832,14 +2888,19 @@ def teacher_link_set(request):
       • mode=temporary: أستاذ بديل ليوم محدد فقط (افتراضياً اليوم).
       • mode=clear: إزالة الأستاذ الأساسي.
     """
-    cid = request.POST.get('circle_id')
+    cid = _pk_or_none(request.POST.get('circle_id'))
+    if cid is None:
+        return JsonResponse({'ok': False, 'error': 'معرّف الحلقة غير صالح'}, status=400)
     circle = get_object_or_404(Circle, pk=cid)
     mode = request.POST.get('mode') or 'permanent'
-    tid = (request.POST.get('teacher_id') or '').strip()
+    raw_tid = (request.POST.get('teacher_id') or '').strip()
+    tid = _pk_or_none(raw_tid)
+    if raw_tid and tid is None:
+        return JsonResponse({'ok': False, 'error': 'معرّف الأستاذ غير صالح'}, status=400)
     new_teacher = (request.POST.get('new_teacher_name') or '').strip()
-    teacher = Teacher.objects.filter(pk=tid).first() if tid else None
+    teacher = Teacher.objects.filter(pk=tid).first() if tid is not None else None
     if new_teacher:
-        teacher, _ = Teacher.objects.get_or_create(name=new_teacher[:150])
+        teacher = Teacher.get_or_create_by_name(new_teacher)      # الاسم غير فريد: لا نستعمل get_or_create
         _log_admin_action(request, f'➕ إضافة أستاذ: {teacher.name}')
 
     if mode == 'temporary':
@@ -2927,7 +2988,7 @@ def sort_students_page(request):
                 'last_page': (rec[2] or page_of(rec[3], rec[4])) if rec else None,
                 'birth_year': birth.year if birth else None,
                 'parked': parked_at is not None,
-                'grade': grade_of(sid, joined.date() if joined else None)}
+                'grade': grade_of(sid, timezone.localtime(joined).date() if joined else None)}
         total += 1
         if parked_at is not None:
             parked.append(card)
@@ -2987,7 +3048,8 @@ def sort_students_move(request):
             student.save(update_fields=['circle', 'parked_at', 'updated_at'])
             _log_student_move(request, f'{student.name}: «{old.name}» ← «{target.name}»')
 
-    counts = dict(Student.objects.filter(circle_id=old.id, parked_at__isnull=True)
+    count_ids = {old.id} if parking else {old.id, target_id}
+    counts = dict(Student.objects.filter(circle_id__in=count_ids, parked_at__isnull=True)
                   .values('circle_id').annotate(n=Count('id')).values_list('circle_id', 'n'))
     parked_count = Student.objects.filter(parked_at__isnull=False).count()
     return JsonResponse({
@@ -3022,8 +3084,8 @@ def sort_students_add(request):
 
     if kind == 'circle':
         teacher = None
-        tid = request.POST.get('teacher_id') or ''
-        if tid:
+        tid = _pk_or_none(request.POST.get('teacher_id'))
+        if tid is not None:
             teacher = Teacher.objects.filter(pk=tid).first()
         circle = Circle.objects.create(name=name[:150], teacher=teacher)
         _log_admin_action(request, f'➕ إضافة حلقة: {circle.name}' + (f' ({teacher.name})' if teacher else ''))
@@ -3036,7 +3098,7 @@ def sort_students_add(request):
     if kind == 'student':
         circle_raw = (request.POST.get('circle_id') or '').strip()
         parking = circle_raw in ('park', '0', '')
-        circle = None if parking else Circle.objects.filter(pk=circle_raw).first()
+        circle = None if parking else Circle.objects.filter(pk=_pk_or_none(circle_raw)).first()
         if not parking and circle is None:
             return JsonResponse({'ok': False, 'error': 'اختر الحلقة'}, status=400)
         birth = _parse_iso((request.POST.get('birth_date') or '').strip())
@@ -3057,10 +3119,10 @@ def sort_students_add(request):
         }})
 
     if kind == 'link':       # ربط أستاذ بحلقة (أساسي أو بديل ليوم واحد)
-        cid = request.POST.get('circle_id')
-        tid = request.POST.get('teacher_id') or ''
+        cid = _pk_or_none(request.POST.get('circle_id'))
+        tid = _pk_or_none(request.POST.get('teacher_id'))
         circle = get_object_or_404(Circle, pk=cid)
-        teacher = Teacher.objects.filter(pk=tid).first() if tid else None
+        teacher = Teacher.objects.filter(pk=tid).first() if tid is not None else None
         if request.POST.get('temporary') in ('1', 'true', 'on'):
             circle.substitute_teacher = teacher
             circle.substitute_date = _parse_iso(request.POST.get('date') or '') or timezone.localdate()

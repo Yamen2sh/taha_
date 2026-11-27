@@ -22,6 +22,15 @@ class Teacher(models.Model):
     def __str__(self):
         return self.name
 
+    @classmethod
+    def get_or_create_by_name(cls, name):
+        """
+        الأستاذ بهذا الاسم (الأقدم إن تكرر) أو ينشئه. الاسم غير فريد في النظام عمداً،
+        فلا نستعمل get_or_create لأنه يرفع MultipleObjectsReturned عند تكرار الاسم.
+        """
+        name = (name or '').strip()[:150]
+        return cls.objects.filter(name=name).order_by('id').first() or cls.objects.create(name=name)
+
 
 class Circle(models.Model):
     """حلقة قرآنية"""
@@ -583,7 +592,7 @@ class AISettings(models.Model):
     @staticmethod
     def effective_model():
         from django.conf import settings
-        return getattr(settings, 'AI_MODEL', '') or 'gemini-2.5-flash'
+        return getattr(settings, 'AI_MODEL', '') or 'gemini-flash-latest'
 
     @staticmethod
     def env_status():
@@ -597,7 +606,7 @@ class AISettings(models.Model):
             'key_env': getattr(settings, 'AI_API_KEY_ENV', '') if key else '',   # المتغيّر الذي اعتُمد فعلاً
             'base_url': getattr(settings, 'AI_BASE_URL', '') or 'https://generativelanguage.googleapis.com/v1beta',
             'base_url_env': 'AI_BASE_URL' if os.environ.get('AI_BASE_URL') else '(افتراضي: Gemini)',
-            'model': getattr(settings, 'AI_MODEL', '') or 'gemini-2.5-flash',
+            'model': getattr(settings, 'AI_MODEL', '') or 'gemini-flash-latest',
             'model_env': 'AI_MODEL' if os.environ.get('AI_MODEL') else '(افتراضي: Gemini)',
         }
 

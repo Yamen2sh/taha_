@@ -24,6 +24,7 @@ import json
 import logging
 import math
 import re
+import time
 
 logger = logging.getLogger('halaqat.assistant')
 
@@ -531,7 +532,14 @@ def _summarize(rows, group_by, people, month_cols):
 # ───────────────────────── الاتصال بالنموذج ─────────────────────────
 
 API_URL = 'https://generativelanguage.googleapis.com/v1beta'   # الافتراضي: Gemini (بمفتاح واحد فقط)
-GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash'
+GEMINI_DEFAULT_MODEL = 'gemini-flash-latest'      # اسم مستعار تحدّثه Google إلى أحدث Flash (3.8 حالياً)
+# بدائل عند 404 (النموذج غير متاح لمفتاحك/مشروعك)، الأحدث أولاً. أوقفت Google النموذجين 1.5 و2.0 نهائياً،
+# وحصرت 2.5 بالمشاريع التي استخدمته سابقاً (ويُغلق في 1 ديسمبر 2026).
+GEMINI_FALLBACK_MODELS = ('gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.6-flash',
+                          'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-lite-latest',
+                          'gemini-2.5-flash-lite', 'gemini-2.5-flash')
+_MODEL_OVERRIDE = {}      # (العنوان، النموذج المطلوب) ← النموذج الذي نجح فعلاً بعد 404 (لعمر العملية)
+_NO_THINKING = set()      # نماذج رفضت إعداد التفكير فنتوقف عن إرساله لها
 TOOL_NAME = 'build_query'
 
 DEFAULT_SYSTEM_PROMPT = """أنت مترجم أسئلة لنظام إحصائيات حضور حلقات القرآن في «مسجد طه». مهمتك الوحيدة: تحويل سؤال المستخدم إلى مواصفة استعلام منظّمة عبر الأداة build_query. لا تجب عن السؤال بنص، ولا تكتب SQL، ولا تخترع بيانات.
@@ -738,7 +746,30 @@ def _render_prompt(template, today, circle_names):
         return template
 
 
-def build_request_body(question, today, circle_names, model, kind='anthropic', prompt=None):
+def _gemini_major(model):
+    """رقم الجيل لاسم نموذج Gemini (3 لـ gemini-3.8-flash)، و99 للأسماء المستعارة «-latest»، وإلا None."""
+    name = (model or '').lower()
+    if name.endswith('-latest'):
+        return 99
+    found = re.match(r'^gemini-(\d+)', name)
+    return int(found.group(1)) if found else None
+
+
+def _gemini_generation_config(model, thinking=True):
+    """
+    نماذج Gemini 3+ تفكّر افتراضياً (والتفكير يُحتسب من maxOutputTokens فقد ينتهي الرد دون استدعاء الأداة)،
+    وتوصي Google بترك الحرارة الافتراضية: نخفّض مستوى التفكير ونرفع الحدّ. الأجيال الأقدم: كما كانت.
+    """
+    major = _gemini_major(model)
+    if major is not None and major >= 3:
+        cfg = {'maxOutputTokens': 4096}
+        if thinking:
+            cfg['thinkingConfig'] = {'thinkingLevel': 'low'}
+        return cfg
+    return {'temperature': 0, 'maxOutputTokens': 1024}
+
+
+def build_request_body(question, today, circle_names, model, kind='anthropic', prompt=None, thinking=True):
     """يبني جسم الطلب بحسب نوع المزوّد. البرومت يُعبَّأ بالتاريخ وأسماء الحلقات."""
     system = _render_prompt(prompt or DEFAULT_SYSTEM_PROMPT, today, circle_names)
     schema = build_tool_schema()
@@ -760,7 +791,7 @@ def build_request_body(question, today, circle_names, model, kind='anthropic', p
             'tools': [{'functionDeclarations': [_gemini_schema(schema)]}],
             'toolConfig': {'functionCallingConfig': {'mode': 'ANY',
                                                      'allowedFunctionNames': [TOOL_NAME]}},
-            'generationConfig': {'temperature': 0, 'maxOutputTokens': 1024},
+            'generationConfig': _gemini_generation_config(model, thinking),
         }
 
     # OpenAI-compatible: نفس الأداة بصيغة function calling
@@ -824,11 +855,62 @@ def _extract_spec_gemini(data):
     return None
 
 
+def resolved_model(base_url, model):
+    """النموذج المستعمل فعلاً الآن (يختلف عن المضبوط إن ثبت أنه غير متاح لمفتاحك فجُرِّب بديل ونجح)."""
+    requested = _clean_model(model) or GEMINI_DEFAULT_MODEL
+    return _MODEL_OVERRIDE.get((base_url, requested), requested)
+
+
+def _error_detail(resp, limit=200):
+    """نص خطأ المزوّد المختصر من رد HTTP (للتسجيل وللتعرّف على أنواع الرفض)."""
+    try:
+        return str((resp.json().get('error') or {}).get('message') or '')[:limit]
+    except Exception:                                      # noqa: BLE001
+        return str(getattr(resp, 'text', '') or '')[:limit]
+
+
+_NON_TEXT_MODEL = ('tts', 'live', 'audio', 'image', 'embedding', 'robotics', 'omni', 'computer')
+_FLASH_RE = re.compile(r'^gemini-(\d+(?:\.\d+)?)-flash(-lite)?(-preview[\w.-]*)?$')
+
+
+def _rank_gemini_models(names):
+    """
+    يرتّب نماذج النص الصالحة لهذا الغرض: الأحدث أولاً، المستقر قبل المعاينة، وflash قبل flash-lite.
+    (قائمة Google قد تُدرج نماذج لا يملك مفتاحك صلاحية توليدها فعلاً، لذلك نجرّبها بالترتيب.)
+    """
+    ranked = []
+    for name in names:
+        if any(word in name for word in _NON_TEXT_MODEL):
+            continue
+        found = _FLASH_RE.match(name)
+        if found:
+            ver = [int(x) for x in found.group(1).split('.')]
+            key = (-ver[0], -(ver[1] if len(ver) > 1 else 0), bool(found.group(3)), bool(found.group(2)))
+            ranked.append((key, name))
+    return [name for _key, name in sorted(ranked)]
+
+
+def _gemini_alternatives(base_url, api_key, tried, http):
+    """يولّد بدائل النموذج عند 404: القائمة الثابتة أولاً، ثم ما تعرضه واجهة ListModels (حتى 3 نماذج)."""
+    for name in GEMINI_FALLBACK_MODELS:
+        if name not in tried:
+            yield name
+    names, _err = available_models(base_url, api_key, http=http)
+    extra = 0
+    for name in _rank_gemini_models(names):
+        if name not in tried and name not in GEMINI_FALLBACK_MODELS:
+            yield name
+            extra += 1
+            if extra >= 3:
+                return
+
+
 def ask_llm(question, today, circle_names, api_key, model, http=None, timeout=30,
             base_url=None, prompt=None):
     """
     يرسل السؤال (دون أي بيانات طلاب) ويعيد مواصفة خام.
     يعمل مع أي مزوّد/وكيل: Anthropic أو أي API متوافق مع OpenAI — يُحدَّد تلقائياً من العنوان.
+    يتحمّل الأعطال العابرة (مهلة/انقطاع/5xx بمحاولة ثانية) وإيقاف النماذج (404 ← بدائل حديثة تلقائياً).
     يرفع AssistantError برسالة عربية.
     """
     from django.conf import settings
@@ -841,8 +923,8 @@ def ask_llm(question, today, circle_names, api_key, model, http=None, timeout=30
         import requests as http
 
     kind = provider_kind(base_url)
-    model = _clean_model(model) or GEMINI_DEFAULT_MODEL
-    url = _endpoint(base_url, kind, model)
+    requested = _clean_model(model) or GEMINI_DEFAULT_MODEL
+    model = _MODEL_OVERRIDE.get((base_url, requested), requested) if kind == 'gemini' else requested
     headers = {'content-type': 'application/json'}
     if kind == 'anthropic':
         headers.update({'x-api-key': api_key, 'anthropic-version': '2023-06-01'})
@@ -851,32 +933,51 @@ def ask_llm(question, today, circle_names, api_key, model, http=None, timeout=30
     else:
         headers['authorization'] = f'Bearer {api_key}'
 
-    body = build_request_body(question, today, circle_names, model, kind=kind, prompt=prompt)
-    resp = None
-    tried = [model]
-    try:
-        resp = http.post(url, timeout=timeout, headers=headers, json=body)
-        # Gemini: إن كان اسم النموذج غير متاح (404) نجرّب أسماء مستقرة تلقائياً
-        if kind == 'gemini' and getattr(resp, 'status_code', 0) == 404:
-            from django.conf import settings as _s
-            explicit = bool((_s.AI_MODEL or '').strip() and model != GEMINI_DEFAULT_MODEL)
-            candidates = [GEMINI_DEFAULT_MODEL, 'gemini-2.0-flash', 'gemini-flash-latest',
-                          'gemini-1.5-flash'] if not explicit else [GEMINI_DEFAULT_MODEL]
-            for alt in candidates:
-                if not alt or alt in tried:
+    def post(m, thinking=True):
+        """طلب واحد لنموذج m، مع محاولة ثانية فقط للأعطال العابرة (مهلة/انقطاع اتصال/5xx)."""
+        url = _endpoint(base_url, kind, m)
+        body = build_request_body(question, today, circle_names, m, kind=kind, prompt=prompt,
+                                  thinking=thinking and m not in _NO_THINKING)
+        for attempt in (1, 2):
+            try:
+                resp = http.post(url, timeout=timeout, headers=headers, json=body)
+            except Exception as e:                      # noqa: BLE001 — مهلة/شبكة
+                name = e.__class__.__name__
+                logger.warning('تعذّر الاتصال بخدمة الذكاء الاصطناعي (%s) [%s]: %s', url, name, e)
+                if attempt == 1:
+                    time.sleep(1.0)
                     continue
-                tried.append(alt)
-                alt_url = _endpoint(base_url, kind, alt)
-                alt_body = body          # جسم Gemini لا يحوي اسم النموذج (يُمرَّر في المسار فقط)
-                logger.warning('النموذج %s غير متاح — تجربة %s', model, alt)
-                resp = http.post(alt_url, timeout=timeout, headers=headers, json=alt_body)
-                if getattr(resp, 'status_code', 0) != 404:
-                    url, body, model = alt_url, alt_body, alt
-                    break
-    except Exception as e:                       # noqa: BLE001 — مهلة/شبكة
-        logger.warning('تعذّر الاتصال بخدمة الذكاء الاصطناعي (%s): %s', url, e)
-        raise AssistantError('تعذّر الاتصال بخدمة الذكاء الاصطناعي الآن. تحقّق من عنوان الـ API أو حاول بعد قليل.', 'network')
+                if 'Timeout' in name:
+                    raise AssistantError('انتهت مهلة انتظار رد الذكاء الاصطناعي. حاول بعد قليل، وإن تكرّر فاستخدم '
+                                         '«تعديل التفسير» أو راجع «📋 النماذج المتاحة» في صفحة المطور.', 'timeout')
+                raise AssistantError('تعذّر الاتصال بخدمة الذكاء الاصطناعي الآن. تحقّق من عنوان الـ API أو حاول بعد قليل.',
+                                     'network')
+            if attempt == 1 and getattr(resp, 'status_code', 0) in (500, 502, 503, 504):
+                logger.warning('خدمة الذكاء الاصطناعي أعادت %s — إعادة المحاولة', resp.status_code)
+                time.sleep(1.5)
+                continue
+            return resp
+
+    resp = post(model)
+    tried = [model]
+    # Gemini: 404 = النموذج غير متاح لمفتاحك/مشروعك (أوقفت Google 1.5 و2.0 وحصرت 2.5 بالمشاريع القديمة)
+    if kind == 'gemini' and getattr(resp, 'status_code', 0) == 404:
+        for alt in _gemini_alternatives(base_url, api_key, tried, http):
+            if len(tried) >= 12:
+                break
+            tried.append(alt)
+            logger.warning('النموذج %s غير متاح (404) — تجربة %s', model, alt)
+            alt_resp = post(alt)
+            if getattr(alt_resp, 'status_code', 0) != 404:
+                resp, model = alt_resp, alt
+                _MODEL_OVERRIDE[(base_url, requested)] = alt       # لا نُعيد تجريب الميّت في كل سؤال
+                break
     status = getattr(resp, 'status_code', 0)
+    # نماذج Gemini 3+: إن رفض النموذج مستوى التفكير المرسَل نُعيد الطلب بدونه ونتذكّر ذلك
+    if kind == 'gemini' and status == 400 and 'think' in _error_detail(resp).lower():
+        _NO_THINKING.add(model)
+        resp = post(model, thinking=False)
+        status = getattr(resp, 'status_code', 0)
     if status in (401, 403):
         if kind == 'gemini':
             raise AssistantError('مفتاح Gemini غير صالح أو غير مُفعَّل. تأكّد من GEMINI_API_KEY '
@@ -890,15 +991,15 @@ def ask_llm(question, today, circle_names, api_key, model, http=None, timeout=30
     if status == 429:
         raise AssistantError('الخدمة مشغولة حالياً (تجاوز حدّ الطلبات). جرّب بعد دقيقة.', 'rate')
     if status >= 400:
-        detail = ''
-        try:
-            detail = str((resp.json().get('error') or {}).get('message') or '')[:200]
-        except Exception:                                  # noqa: BLE001
-            detail = getattr(resp, 'text', '')[:200]
+        detail = _error_detail(resp)
         logger.warning('خطأ من خدمة الذكاء الاصطناعي: %s %s', status, detail)
         if status == 400 and ('API key' in detail or 'api key' in detail.lower()):
             raise AssistantError('مفتاح الـ API غير صحيح أو غير مرسل. راجع المتغيّرات البيئية.', 'auth')
-        raise AssistantError('تعذّر فهم السؤال بسبب خطأ في الخدمة. حاول مجدداً.', 'api')
+        if status >= 500:
+            raise AssistantError(f'خدمة الذكاء الاصطناعي مشغولة أو متعطّلة مؤقتاً لدى المزوّد (HTTP {status}). '
+                                 f'حاول بعد قليل أو استخدم «تعديل التفسير».', 'api')
+        raise AssistantError('تعذّر فهم السؤال بسبب خطأ في الخدمة. حاول مجدداً.'
+                             + (f' (HTTP {status}: {detail[:150]})' if detail else ''), 'api')
     try:
         data = resp.json()
     except ValueError:
@@ -974,9 +1075,10 @@ def _not_found_message(kind, base_url, model):
     except Exception:                               # noqa: BLE001
         url = base_url
     if kind == 'gemini':
-        return (f'اسم النموذج أو العنوان غير صحيح (404). العنوان المستخدم: {url} — '
-                f'تأكّد أن AI_MODEL اسم نموذج متاح لمفتاحك مثل gemini-2.5-flash (بدون كلمة models/ أو :generateContent)، '
-                f'وأن AI_BASE_URL هو https://generativelanguage.googleapis.com/v1beta — '
+        return (f'النموذج غير متاح لمفتاحك أو العنوان غير صحيح (404). العنوان المستخدم: {url} — '
+                f'أوقفت Google النماذج القديمة (1.5 و2.0) وحصرت 2.5 بالمشاريع التي استخدمته سابقاً، '
+                f'فاضبط AI_MODEL على gemini-flash-latest (أو gemini-3.8-flash)، '
+                f'وتأكّد أن AI_BASE_URL هو https://generativelanguage.googleapis.com/v1beta (بدون models/ أو :generateContent) — '
                 f'واضغط «📋 النماذج المتاحة» في صفحة المطور لعرض أسماء نماذج مفتاحك.')
     return (f'عنوان الـ API أو اسم النموذج غير صحيح (404). العنوان المستخدم: {url} — '
             f'راجع AI_MODEL وAI_BASE_URL، واضغط «📋 النماذج المتاحة» لعرض الأسماء المتاحة.')

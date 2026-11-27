@@ -249,7 +249,8 @@
       const data = await post(URLS.ask, {question});
       if (!data.ok) {
         showError(data.error || 'تعذّر فهم السؤال');
-        if (data.code === 'no_key' || data.code === 'rate') openManual();
+        // عند تعذّر الذكاء الاصطناعي لأي سبب (مفتاح/حدّ/نموذج/شبكة/مهلة) يبقى «تعديل التفسير» اليدوي متاحاً
+        if (['no_key', 'rate', 'not_found', 'network', 'timeout', 'auth', 'api'].includes(data.code)) openManual();
         return;
       }
       showResult(data);

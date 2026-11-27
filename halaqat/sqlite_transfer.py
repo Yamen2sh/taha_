@@ -161,38 +161,177 @@ def read_meta(path):
         conn.close()
 
 
+_ARABIC_DIGITS = str.maketrans('٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789')
+
+
+def _epoch_to_datetime(num):
+    """ثوانٍ أو ميلي ثوانٍ منذ 1970 ← datetime بتوقيت المشروع (الرياض)، أو None إن لم يبدُ طابعاً زمنياً."""
+    from datetime import datetime, timezone as dtz
+    from django.utils import timezone as tz
+    if 1e12 <= abs(num) < 1e14:                # ميلي ثانية (13 رقماً)
+        num = num / 1000.0
+    if not 1e8 <= num < 1e11:                  # ثوانٍ (9–10 أرقام)
+        return None
+    try:
+        return tz.localtime(datetime.fromtimestamp(num, dtz.utc))
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _number_to_date(num):
+    """تواريخ مخزَّنة كأرقام في أدوات أخرى: YYYYMMDD أو رقم Excel أو Julian أو epoch (ثوانٍ/ميلي)."""
+    import math
+    from datetime import date, timedelta
+    if num != num or num in (float('inf'), float('-inf')):
+        return None
+    try:
+        if 19000101 <= num <= 21001231 and float(num).is_integer():
+            text = str(int(num))
+            return date(int(text[:4]), int(text[4:6]), int(text[6:8]))
+        if 25569 <= num <= 73050:              # رقم Excel التسلسلي (1970–2099)
+            return date(1899, 12, 30) + timedelta(days=int(num))
+        if 2415021 <= num <= 2488070:          # يوم Julian (1900–2100)
+            return date(1970, 1, 1) + timedelta(days=math.floor(num - 2440587.5))
+    except (ValueError, OverflowError):
+        return None
+    moment = _epoch_to_datetime(num)
+    return moment.date() if moment else None
+
+
+def _to_date(value):
+    """
+    يفهم تواريخ ملفات SQLite القادمة من أدوات مختلفة: نص ISO أو 26/07/2026 أو 2026/7/26 (بأرقام عربية أيضاً)،
+    وأرقام (epoch/Excel/Julian/YYYYMMDD). يعيد date أو None إن لم يفهم القيمة.
+    """
+    import re
+    from datetime import date, datetime
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        value = bytes(value).decode('utf-8', 'ignore')
+    if isinstance(value, (int, float)):
+        return _number_to_date(value)
+    text = str(value).strip().translate(_ARABIC_DIGITS)
+    if not text:
+        return None
+    if re.fullmatch(r'-?\d+(\.\d+)?', text):
+        return _number_to_date(float(text))
+    if re.search(r'[T ]\d{1,2}:\d{2}.*(Z|[+-]\d{2}:?\d{2})$', text):       # طابع زمني بمنطقة زمنية: التاريخ المحلي
+        moment = _to_datetime(text)
+        if moment is not None:
+            from django.utils import timezone as tz
+            return tz.localtime(moment).date()
+    try:
+        found = re.match(r'^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?!\d)', text)      # 2026-07-26 | 2026/7/26 (+ وقت)
+        if found:
+            return date(int(found[1]), int(found[2]), int(found[3]))
+        found = re.match(r'^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})(?!\d)', text)      # 26/07/2026 (اليوم أولاً)
+        if found:
+            first, second, year = int(found[1]), int(found[2]), int(found[3])
+            day, month = (first, second) if second <= 12 else (second, first)     # إن كان الثاني > 12 فهو اليوم
+            return date(year, month, day)
+    except ValueError:
+        return None
+    return None
+
+
+def _to_datetime(value):
+    """طابع زمني من أي صيغة شائعة (ISO، أرقام epoch، أو تاريخ فقط). غير المصرَّح بمنطقته يُعدّ UTC (كما يخزّنه Django في SQLite)."""
+    import re
+    from datetime import datetime, time, timezone as dtz
+    from django.utils import timezone as tz
+    from django.utils.dateparse import parse_datetime
+    if value is None or isinstance(value, bool):
+        return None
+    moment = None
+    if isinstance(value, datetime):
+        moment = value
+    else:
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            value = bytes(value).decode('utf-8', 'ignore')
+        if isinstance(value, (int, float)) or re.fullmatch(r'-?\d+(\.\d+)?', str(value).strip().translate(_ARABIC_DIGITS)):
+            num = float(value) if isinstance(value, (int, float)) else float(str(value).strip().translate(_ARABIC_DIGITS))
+            moment = _epoch_to_datetime(num)
+            if moment is None:
+                day = _number_to_date(num)
+                moment = datetime.combine(day, time.min) if day else None
+        else:
+            text = str(value).strip().translate(_ARABIC_DIGITS)
+            for parser in (parse_datetime, datetime.fromisoformat):
+                try:
+                    moment = parser(text)
+                except ValueError:
+                    moment = None
+                if moment is not None:
+                    break
+            if moment is None:
+                day = _to_date(text)
+                moment = datetime.combine(day, time.min) if day else None
+    if moment is None:
+        return None
+    if tz.is_naive(moment):
+        moment = moment.replace(tzinfo=dtz.utc)
+    return moment
+
+
 def _coerce(value, field):
     """يحوّل قيمة من SQLite إلى نوع الحقل المطلوب في قاعدة البيانات الحالية."""
     if value is None:
         return None
     kind = field.get_internal_type()
-    from datetime import date, datetime
-    if kind in ('DateField',):
-        if isinstance(value, date) and not isinstance(value, datetime):
-            return value
-        try:
-            return date.fromisoformat(str(value)[:10])
-        except ValueError:
-            return None
-    if kind in ('DateTimeField',):
-        from django.utils.dateparse import parse_datetime
-        from django.utils import timezone as tz
-        if isinstance(value, datetime):
-            return value
-        dt = parse_datetime(str(value))
-        if dt is None:
-            try:
-                dt = datetime.fromisoformat(str(value))
-            except ValueError:
-                return None
-        if dt.tzinfo is None:
-            dt = tz.make_aware(dt)
-        return dt
+    if kind == 'DateField':
+        return _to_date(value)
+    if kind == 'DateTimeField':
+        return _to_datetime(value)
     if kind == 'BooleanField':
+        if isinstance(value, str):
+            return value.strip().lower() in ('1', 'true', 't', 'yes', 'y', 'نعم')
         return bool(value)
-    if isinstance(value, str) and kind not in ('CharField', 'TextField', 'EmailField', 'SlugField'):
-        return value
     return value
+
+
+def _fill_required(field, raw):
+    """
+    قيمة بديلة آمنة لحقل إلزامي جاء فارغاً: (القيمة، نجح؟).
+    نص/رقم/منطقي ← قيمته الافتراضية، وأختام الوقت التلقائية ← الآن.
+    التواريخ والمفاتيح الأجنبية والحقول ذات الخيارات (كحالة الحضور) لا تُخترع أبداً:
+    تُعدّ مشكلة ويتوقف الاستيراد برسالة واضحة بدل إدخال بيانات خاطئة.
+    """
+    kind = field.get_internal_type()
+    if isinstance(field, ForeignKey) or field.choices or kind == 'DateField':
+        return None, False
+    if kind == 'DateTimeField':
+        if getattr(field, 'auto_now', False) or getattr(field, 'auto_now_add', False):
+            from django.utils import timezone
+            return timezone.now(), True
+        return None, False
+    if field.has_default():
+        default = field.get_default()
+        return default, default is not None
+    if kind in ('CharField', 'TextField', 'EmailField', 'SlugField'):
+        return '', True
+    if kind.endswith('IntegerField'):
+        return 0, True
+    if kind == 'BooleanField':
+        return False, True
+    return None, False
+
+
+def _problems_message(problems):
+    """رسالة عربية واضحة بالأعمدة الإلزامية الفارغة/غير المفهومة مع أمثلة من الملف (القيمة الأصلية تُظهر الصيغة)."""
+    grouped = {}
+    for table, pk, column, raw in problems:
+        grouped.setdefault((table, column), []).append((pk, raw))
+    parts = []
+    for (table, column), items in list(grouped.items())[:6]:
+        sample = '، '.join(f'id={pk} ← {raw!r}' for pk, raw in items[:3])
+        parts.append(f'«{table}.{column}»: {len(items)} صفاً (مثال: {sample})')
+    return ('لم يُستورد شيء: الملف يحوي قيماً فارغة أو بصيغة غير مفهومة في أعمدة إلزامية — ' + ' | '.join(parts)
+            + '. صحّح هذه القيم في الملف (التواريخ بصيغة YYYY-MM-DD مثل 2026-07-26) ثم أعد الاستيراد.')
 
 
 def _file_tables(path):
@@ -319,21 +458,42 @@ def import_from_file(path, keep_ai_settings=True, force=False):
                 ).fetchall()
                 objs = []
                 pk_field = next((f for f in usable if f.primary_key), None)
+                # حقول auto_now / auto_now_add تُغلب القيمة المُمرَّرة عند bulk_create (فتضيع تواريخ الانضمام والتسجيل الأصلية)
+                auto_fields = [f for f in usable if getattr(f, 'auto_now', False) or getattr(f, 'auto_now_add', False)]
+                originals = []                       # (الكائن، {حقل: قيمته في الملف}) لاستعادتها بعد الإدراج
+                problems = []                        # (جدول، id، عمود، القيمة الأصلية)
                 for row in rows:
                     kwargs = {}
                     for f in usable:
                         if f.primary_key:
                             continue
-                        if isinstance(f, ForeignKey):
-                            kwargs[f.attname] = row[f.column]
-                        else:
-                            kwargs[f.attname] = _coerce(row[f.column], f)
+                        raw = row[f.column]
+                        value = raw if isinstance(f, ForeignKey) else _coerce(raw, f)
+                        if value is None and not f.null:
+                            value, filled = _fill_required(f, raw)
+                            if not filled:
+                                problems.append((table, row[pk_field.column] if pk_field is not None else None,
+                                                 f.column, raw))
+                        kwargs[f.attname] = value
                     obj = model(**kwargs)
                     if pk_field is not None:
                         obj.pk = row[pk_field.column]
                     objs.append(obj)
+                    if auto_fields:
+                        keep = {f.attname: kwargs[f.attname] for f in auto_fields
+                                if row[f.column] is not None and kwargs.get(f.attname) is not None}
+                        if keep:
+                            originals.append((obj, keep))
+                if problems:                         # داخل المعاملة: الاستثناء يُرجع كل شيء (لا يُستورد نصف الملف)
+                    raise ValueError(_problems_message(problems))
                 if objs:
                     model.objects.bulk_create(objs, batch_size=500)
+                    if originals:
+                        for obj, keep in originals:
+                            for attname, value in keep.items():
+                                setattr(obj, attname, value)
+                        model.objects.bulk_update([obj for obj, _keep in originals],
+                                                  [f.name for f in auto_fields], batch_size=500)
                 counts[table] = len(objs)
 
             # 3) العلاقات many-to-many (للجداول الموجودة فقط)
@@ -374,10 +534,13 @@ def _reset_sequences():
             pk = model._meta.pk.column
             seq = f'{table}_{pk}_seq'
             try:
-                cur.execute(f"SELECT setval(%s, COALESCE((SELECT MAX({pk}) FROM \"{table}\"), 1), "
-                            f"(SELECT COUNT(*) > 0 FROM \"{table}\"))", [seq])
+                # نقطة حفظ: فشل جدول واحد لا يُفسد معاملة الاستيراد (وإلا يتحوّل COMMIT إلى ROLLBACK بصمت)
+                with transaction.atomic():
+                    cur.execute(f"SELECT setval(%s, COALESCE((SELECT MAX({pk}) FROM \"{table}\"), 1), "
+                                f"(SELECT COUNT(*) > 0 FROM \"{table}\"))", [seq])
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).warning('تعذّر ضبط تسلسل %s', seq, exc_info=True)
 
 
 def temp_backup_path(suffix='sqlite'):

@@ -44,7 +44,7 @@ class CircleForm(forms.ModelForm):
     def save(self, commit=True):
         new_name = self.cleaned_data.get('new_teacher_name')
         if new_name:
-            teacher, _ = Teacher.objects.get_or_create(name=new_name.strip())
+            teacher = Teacher.get_or_create_by_name(new_name)     # الاسم غير فريد: لا نستعمل get_or_create
             self.instance.teacher = teacher
         return super().save(commit=commit)
 
@@ -92,6 +92,21 @@ class WhatsAppAbsentForm(forms.Form):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields['circle'].queryset = Circle.objects.all()
+
+    # المتغيّرات التي تمرّرها لوحة التحكم إلى str.format عند الإرسال
+    PLACEHOLDERS = ('student_name', 'circle_name', 'date', 'week_absences', 'month_absences')
+
+    def clean_message(self):
+        """يتحقق من نص الرسالة قبل الإرسال: خطأ في الأقواس كان يُسقط خيط الإرسال بصمت بعد رسالة «بدأ الإرسال»."""
+        text = self.cleaned_data['message']
+        try:
+            text.format(student_name='x', circle_name='x', date='2000-01-01', week_absences=0, month_absences=0)
+        except (KeyError, IndexError, ValueError, AttributeError):
+            raise forms.ValidationError(
+                'نص الرسالة يحوي أقواساً { } غير صحيحة. المتغيّرات المسموحة فقط: '
+                + ' '.join('{%s}' % name for name in self.PLACEHOLDERS)
+                + ' — ولكتابة قوس حرفي استعمل {{ أو }}.')
+        return text
 
 
 class StudentMultipleChoiceField(forms.ModelMultipleChoiceField):
@@ -141,7 +156,7 @@ class CourseForm(forms.ModelForm):
         new_name = self.cleaned_data.get('new_teacher_name')
         course = super().save(commit=commit)
         if new_name:
-            teacher, _ = Teacher.objects.get_or_create(name=new_name.strip())
+            teacher = Teacher.get_or_create_by_name(new_name)
             course.teachers.add(teacher)
         return course
 
