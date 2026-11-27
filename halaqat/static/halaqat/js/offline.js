@@ -149,7 +149,23 @@
   /* ───────── Service Worker: تخزين صفحات التنقّل ───────── */
   function registerSW() {
     if (!('serviceWorker' in navigator)) return;
-    navigator.serviceWorker.register('/sw.js', {scope: '/'}).catch(() => {});
+    navigator.serviceWorker.register('/sw.js', {scope: '/'}).then(reg => {
+      // ابحث عن نسخة جديدة من الـSW عند كل تحميل، وأعِد تحميل الصفحة مرة واحدة
+      // عند توفّرها — حتى لا يبقى المتصفح على ملفات JS/CSS قديمة بعد النشر.
+      const activate = () => reg.update().catch(() => {});
+      activate();
+      reg.addEventListener('updatefound', () => {
+        const nw = reg.installing;
+        if (!nw) return;
+        nw.addEventListener('statechange', () => {
+          if (nw.state === 'installed' && navigator.serviceWorker.controller &&
+              !sessionStorage.getItem('sw_reloaded')) {
+            sessionStorage.setItem('sw_reloaded', '1');
+            location.reload();
+          }
+        });
+      });
+    }).catch(() => {});
   }
 
   /* ───────── بدء التشغيل ───────── */
@@ -163,8 +179,20 @@
   });
   window.addEventListener('load', renderBadge);
 
+  /* تحديث قسري: امسح كاش الملفات وأعِد التحميل (يُستعمل عند التصحيح من الكونسول). */
+  async function hardRefresh() {
+    try {
+      if ('caches' in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map(k => caches.delete(k)));
+      }
+      sessionStorage.removeItem('sw_reloaded');
+    } catch (e) { /* تجاهل */ }
+    location.reload();
+  }
+
   window.TahaSync = {
-    post, flush, enqueue,
+    post, flush, enqueue, hardRefresh,
     pending: () => readQueue().length,
     isOnline: () => navigator.onLine,
     status: () => ({online: navigator.onLine, pending: readQueue().length}),

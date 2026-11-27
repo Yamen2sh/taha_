@@ -5,7 +5,7 @@
  * لا يخزّن إلا صفحة HTML ناجحة (200) وبلا بيانات POST.
  */
 const PAGE_CACHE = 'taha-pages-v2';   // رفع الإصدار يمسح النسخ القديمة المحفوظة على كل الأجهزة
-const ASSET_CACHE = 'taha-assets-v1';
+const ASSET_CACHE = 'taha-assets-v2';   // v2: كان الملف يُقدَّم من الكاش أولاً فيبقى قديماً بعد كل تحديث
 const OFFLINE_HTML = `<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>بلا اتصال — مسجد طه</title>
@@ -47,14 +47,17 @@ self.addEventListener('fetch', event => {
   const isAsset = /\.(css|js|png|jpg|jpeg|svg|webp|ttf|woff2?|ico)$/i.test(url.pathname);
 
   if (isAsset) {
+    // «الشبكة أولاً»: كان «الجهاز أولاً» يجعل نسخة JS القديمة تلتصق بالمتصفح
+    // فلا تصل أي إصلاحات بعد النشر. الكاش الآن للعمل بلا اتصال فقط.
     event.respondWith((async () => {
       const cache = await caches.open(ASSET_CACHE);
-      const hit = await cache.match(req);
-      const network = fetch(req).then(res => {
+      try {
+        const res = await fetch(req, {cache: 'no-cache'});
         if (res && res.ok) cache.put(req, res.clone());
         return res;
-      }).catch(() => hit);
-      return hit || network;
+      } catch (e) {
+        return (await cache.match(req)) || Response.error();
+      }
     })());
     return;
   }
