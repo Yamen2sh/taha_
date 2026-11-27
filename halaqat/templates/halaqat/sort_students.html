@@ -29,7 +29,7 @@
 
 {# إضافة سريعة: طالب / أستاذ / حلقة — بلا مغادرة الصفحة #}
 <div class="dn-addbar" id="dn-addbar" hidden>
-  <div class="dn-addform" data-kind="student">
+  <div class="dn-addform" data-form-kind="student">
     <b>➕ طالب</b>
     <input type="text" name="name" placeholder="اسم الطالب">
     <input type="date" name="birth_date" title="تاريخ الميلاد (اختياري)">
@@ -39,13 +39,13 @@
     </select>
     <button type="button" class="dn-addbtn">إضافة طالب</button>
   </div>
-  <div class="dn-addform" data-kind="teacher">
+  <div class="dn-addform" data-form-kind="teacher">
     <b>➕ أستاذ</b>
     <input type="text" name="name" placeholder="اسم الأستاذ">
     <input type="text" name="phone" placeholder="الهاتف (اختياري)">
     <button type="button" class="dn-addbtn">إضافة أستاذ</button>
   </div>
-  <div class="dn-addform" data-kind="circle">
+  <div class="dn-addform" data-form-kind="circle">
     <b>➕ حلقة</b>
     <input type="text" name="name" placeholder="اسم الحلقة">
     <select name="teacher_id">
@@ -58,7 +58,8 @@
 </div>
 
 <div class="dn-hint">
-  بالماوس: اسحب البطاقة من أي مكان. باللمس: اسحب من المقبض <b>⠿</b>، أو اضغط على البطاقة ضغطة مطوّلة ثم اسحب.<br>
+  <b>أسهل طريقة وأضمنها:</b> انقر البطاقة مرة (تُضاء) ثم انقر الحاوية التي تريدها — يعمل بالماوس واللمس.<br>
+  أو بالماوس: اسحب البطاقة من أي مكان. باللمس: اسحب من المقبض <b>⠿</b> أو اضغط مطوّلاً ثم اسحب.<br>
   الدائرة الملوّنة بجانب كل اسم = <b>نسبة حضوره</b> في آخر شهر (أخضر 100% ← أصفر ← أحمر 0%).<br>
   زر <b>✕</b> يضع العنصر في <b>سلة الحذف</b> 🗑 (يفتحها زر السلة في الشريط العلوي) — الحذف يُثبَّت بتأكيدك أو عند مغادرة الصفحة.
 </div>
@@ -107,7 +108,7 @@
 
     {# بطاقة الأستاذ: تُنقل فقط (إلى حلقة أخرى أو الحاوية الفارغة) #}
     {% if b.circle.teacher %}
-    <div class="dn-teacher-card" data-teacher="{{ b.circle.teacher.id }}" data-name="{{ b.circle.teacher.name }}">
+    <div class="dn-teacher-card" data-kind="teacher" data-teacher="{{ b.circle.teacher.id }}" data-name="{{ b.circle.teacher.name }}">
       <span class="dn-tgrip" aria-hidden="true">⠿</span>
       <span class="dn-tname">👨‍🏫 {{ b.circle.teacher.name }}</span>
       <span class="dn-trole">أستاذ الحلقة</span>
@@ -118,7 +119,7 @@
 
     <div class="dn-list" data-list>
       {% for s in b.students %}
-      <div class="dn-card" data-student="{{ s.id }}" data-name="{{ s.name }}">
+      <div class="dn-card" data-kind="student" data-student="{{ s.id }}" data-name="{{ s.name }}">
         <span class="dn-grip" aria-hidden="true">⠿</span>
         <span class="dn-ring" data-ring style="--rate:{{ s.grade.rate|default_if_none:0 }};--ring:{{ s.grade.ring }};--ink:{{ s.grade.ink }}"
               title="نسبة الحضور آخر شهر: {% if s.grade.rate is None %}{{ s.grade.label }}{% else %}{{ s.grade.rate }}%{% endif %}">
@@ -159,7 +160,7 @@
 
     <div class="dn-park-teachers" data-park-teachers>
       {% for t in free_teachers %}
-      <div class="dn-teacher-card free" data-teacher="{{ t.id }}" data-name="{{ t.name }}">
+      <div class="dn-teacher-card free" data-kind="teacher" data-teacher="{{ t.id }}" data-name="{{ t.name }}">
         <span class="dn-tgrip" aria-hidden="true">⠿</span>
         <span class="dn-tname">👨‍🏫 {{ t.name }}</span>
         <span class="dn-trole">بلا حلقة</span>
@@ -170,7 +171,7 @@
 
     <div class="dn-list dn-park-list" data-list>
       {% for s in parked %}
-      <div class="dn-card dn-card-park" data-student="{{ s.id }}" data-name="{{ s.name }}">
+      <div class="dn-card dn-card-park" data-kind="student" data-student="{{ s.id }}" data-name="{{ s.name }}">
         <span class="dn-grip" aria-hidden="true">⠿</span>
         <span class="dn-ring" data-ring style="--rate:{{ s.grade.rate|default_if_none:0 }};--ring:{{ s.grade.ring }};--ink:{{ s.grade.ink }}"
               title="نسبة الحضور آخر شهر: {% if s.grade.rate is None %}{{ s.grade.label }}{% else %}{{ s.grade.rate }}%{% endif %}">
@@ -206,5 +207,5 @@
   🗑 <span id="dn-trash-fab-n">0</span>
 </button>
 
-<script src="{% static 'halaqat/js/sort_students.js' %}?v=6"></script>
+<script src="{% static 'halaqat/js/sort_students.js' %}?v=8"></script>
 {% endblock %}
