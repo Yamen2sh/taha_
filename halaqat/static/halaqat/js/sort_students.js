@@ -176,6 +176,8 @@
       }
       card.classList.add('flash');
       setTimeout(() => card.classList.remove('flash'), 1500);
+      // أظهر البطاقة في مكانها الجديد (الحاوية قد تحتاج تمريراً داخلياً)
+      try { card.scrollIntoView({block: 'nearest'}); } catch (e) { /* غير مدعوم */ }
       const verb = toIsPark ? 'وُضع في الحاوية الفارغة' : `${isUndo ? 'أُعيد' : 'نُقل'} إلى ${nameOf(toCol)}`;
       const msg = `✅ «${stdName(card)}» ${verb}`;
       setStatus(data.queued ? '📴 ' + msg + ' — سيُرسل عند رجوع الاتصال' : msg);
@@ -204,7 +206,13 @@
 
   const colAt = (x, y) => {
     const el = document.elementFromPoint(x, y);
-    return el ? el.closest(COL_SEL) : null;
+    const col = el ? el.closest(COL_SEL) : null;
+    if (col) return col;
+    // تسامح: إن كان المؤشر داخل حدود عمود (ولو على هامشه أو رأسه) نعتبره هدفاً
+    return cols().find(c => {
+      const r = c.getBoundingClientRect();
+      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    }) || null;
   };
 
   function place(d) {
@@ -237,6 +245,7 @@
     d.active = true;
     d.ox = d.sx - r.left;
     d.oy = d.sy - r.top;
+    document.querySelectorAll('.dn-ghost').forEach(g0 => g0.remove());   // شبح عالق من محاولة سابقة
     const g = d.card.cloneNode(true);
     g.classList.add('dn-ghost');
     g.classList.remove('is-hit', 'flash');
@@ -265,7 +274,10 @@
     try { d.card.releasePointerCapture(d.pid); } catch (e) { /* تجاهل */ }
     board.querySelectorAll('.is-over').forEach(c => c.classList.remove('is-over'));
     const target = drop ? colAt(d.x, d.y) : null;
-    if (!target) return;
+    if (!target) {
+      if (drop) toast('أفلتت البطاقة خارج أي حلقة — لم يتغيّر شيء', 'warn');
+      return;
+    }
     if (d.kind === 'teacher') {
       if (target === d.from) return;
       moveTeacher(d.card, target);
@@ -387,7 +399,12 @@
   }, {passive: false});
 
   document.addEventListener('pointerup', e => { if (drag && e.pointerId === drag.pid) finish(true); });
-  document.addEventListener('pointercancel', e => { if (drag && e.pointerId === drag.pid) finish(false); });
+  document.addEventListener('pointercancel', e => {
+    if (!drag || e.pointerId !== drag.pid) return;
+    const wasActive = drag.active;
+    finish(false);
+    if (wasActive) toast('↩ أُلغي السحب — اسحب من المقبض ⠿ أو اضغط مطوّلاً', 'warn');
+  });
   document.addEventListener('touchmove', e => { if (drag && drag.active) e.preventDefault(); }, {passive: false});
   board.addEventListener('contextmenu', e => { if (e.target.closest('.dn-card, .dn-teacher-card')) e.preventDefault(); });
   board.addEventListener('dragstart', e => e.preventDefault());
