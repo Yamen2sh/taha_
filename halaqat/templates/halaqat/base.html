@@ -95,7 +95,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') toggleDrawer
   <div class="qs-box"><button class="qs-close" onclick="closeQuickStats()">✕</button><div id="qs-body"></div></div>
 </div>
 {% if user.is_authenticated %}<script src="{% static 'halaqat/js/student_index.js' %}?v=2"></script>
-<script src="{% static 'halaqat/js/offline.js' %}?v=1"></script>
+<script src="{% static 'halaqat/js/offline.js' %}?v=2"></script>
 <script src="{% static 'halaqat/js/ui.js' %}?v=2" defer></script>
 <script src="{% static 'halaqat/js/export_image.js' %}?v=1" defer></script>{% endif %}
 <script>
