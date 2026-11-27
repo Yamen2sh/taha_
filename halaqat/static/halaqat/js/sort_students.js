@@ -44,6 +44,8 @@
   const nameOf = col => col.dataset.name;
   const stdName = card => card.dataset.name;
   const isPark = col => col.dataset.circle === 'park';
+  const isTeacherCard = el => !!el && (el.classList.contains('dn-teacher-card') || el.dataset.teacher);
+  const isStudentCard = el => !!el && (el.classList.contains('dn-card') || el.dataset.student);
   let parked = parseInt(board.dataset.parkedCount, 10) || 0;
 
   function recount(col) {
@@ -204,27 +206,40 @@
   /* ───────── السحب (بطاقات الطلاب والأساتذة) ───────── */
   let drag = null;
 
-  const colAt = (x, y) => {
-    const el = document.elementFromPoint(x, y);
-    const col = el ? el.closest(COL_SEL) : null;
-    if (col) return col;
-    // تسامح: إن كان المؤشر داخل حدود عمود (ولو على هامشه أو رأسه) نعتبره هدفاً
+  /* ═════ تحديد العمود الهدف ═════
+     لا نعتمد على elementFromPoint وحده (يخيب عند حدود العمود وشبح السحب)،
+     بل نجمع ثلاثة مصادر ونأخذ أولها:
+       1) pointerenter على العمود أثناء السحب (pointer-events:none على الشبح يسمح بذلك).
+       2) elementFromPoint كخطة ثانية.
+       3) حدود المستطيلات كخطة أخيرة.
+  */
+  function colFromPoint(x, y) {
+    let el = null;
+    try { el = document.elementFromPoint(x, y); } catch (e) { el = null; }
+    if (el) {
+      const c = el.closest(COL_SEL);
+      if (c) return c;
+    }
     return cols().find(c => {
       const r = c.getBoundingClientRect();
       return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
     }) || null;
-  };
+  }
 
+  /* تحريك شبح السحب ليتبع المؤشر */
   function place(d) {
-    d.ghost.style.transform = `translate(${d.x - d.ox}px, ${d.y - d.oy}px) rotate(1.5deg)`;
+    if (!d || !d.ghost) return;
+    d.ghost.style.transform =
+      `translate(${Math.round(d.x - d.ox)}px, ${Math.round(d.y - d.oy)}px) rotate(1.5deg)`;
   }
 
   function hover(d) {
-    const col = colAt(d.x, d.y);
+    // الأولوية للعمود الذي دخل المؤشر حدوده فعلاً (أدق من النقطة)
+    const col = d.enterOver || colFromPoint(d.x, d.y);
     if (col === d.over) return;
     if (d.over) d.over.classList.remove('is-over');
     d.over = col;
-    if (col && col !== d.from) col.classList.add('is-over');
+    if (col) col.classList.add('is-over');
   }
 
   function tick() {
@@ -252,6 +267,8 @@
     g.style.width = r.width + 'px';
     document.body.appendChild(g);
     d.ghost = g;
+    d.enterOver = null;
+    dragStartedAt = Date.now();
     d.card.classList.add('is-dragging');
     document.body.classList.add('dn-dragging');
     try { d.card.setPointerCapture(d.pid); } catch (e) { /* غير مدعوم */ }
@@ -273,15 +290,18 @@
     document.body.classList.remove('dn-dragging');
     try { d.card.releasePointerCapture(d.pid); } catch (e) { /* تجاهل */ }
     board.querySelectorAll('.is-over').forEach(c => c.classList.remove('is-over'));
-    const target = drop ? colAt(d.x, d.y) : null;
+    const target = drop ? (d.enterOver || colFromPoint(d.x, d.y)) : null;
     if (!target) {
       if (drop) toast('أفلتت البطاقة خارج أي حلقة — لم يتغيّر شيء', 'warn');
       return;
     }
+    dragStartedAt = Date.now();
     if (d.kind === 'teacher') {
       if (target === d.from) return;
+      lastDragAt = Date.now();
       moveTeacher(d.card, target);
     } else if (target !== d.from) {
+      lastDragAt = Date.now();
       doMove(d.card, d.from, target, false);
     }
   }
@@ -372,11 +392,30 @@
       card, kind: tcard ? 'teacher' : 'student',
       from: card.closest(COL_SEL), pid: e.pointerId, type: e.pointerType,
       sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY,
-      ox: 0, oy: 0, active: false, timer: null, ghost: null, over: null, raf: 0,
+      ox: 0, oy: 0, active: false, timer: null, ghost: null, over: null, enterOver: null, raf: 0,
     };
     if (e.pointerType !== 'mouse' && !onGrip) {
       const d = drag;
       d.timer = setTimeout(() => { d.timer = null; if (drag === d) begin(); }, HOLD_MS);
+    }
+  });
+
+  /* العمود الذي يدخله المؤشر أثناء السحب — أدق وسيلة لتحديد الهدف
+     (شبح السحب عليه pointer-events:none فلا يحجب الأحداث عن الأعمدة). */
+  board.addEventListener('pointerover', e => {
+    if (!drag || !drag.active) return;
+    const col = e.target.closest(COL_SEL);
+    if (col && col !== drag.enterOver) {
+      drag.enterOver = col;
+      hover(drag);
+    }
+  });
+  board.addEventListener('pointerleave', e => {
+    if (!drag || !drag.active) return;
+    const col = e.target.closest(COL_SEL);
+    if (col && drag.enterOver === col && !col.contains(e.relatedTarget)) {
+      drag.enterOver = null;
+      hover(drag);
     }
   });
 
@@ -419,7 +458,7 @@
     const btn = e.target.closest('.dn-addbtn');
     if (!btn) return;
     const form = btn.closest('.dn-addform');
-    const kind = form.dataset.kind;
+    const kind = form.dataset.formKind || form.dataset.kind;
     const get = n => (form.querySelector('[name="' + n + '"]') || {}).value || '';
     const name = get('name').trim();
     if (!name) { form.querySelector('[name="name"]').focus(); return; }
@@ -506,7 +545,7 @@
   /* زر «＋ إضافة» في الشريط: يفتح شريط الإضافة ويُركّز على اسم الطالب */
   $addToggle.addEventListener('click', () => {
     if (!$addbar.hidden) {
-      const f = $addbar.querySelector('.dn-addform[data-kind="student"] [name="name"]');
+      const f = $addbar.querySelector('.dn-addform [name="name"]');
       if (f) f.focus();
     }
   });
@@ -514,6 +553,7 @@
   function studentCardEl(s) {
     const el = document.createElement('div');
     el.className = 'dn-card' + (s.parked ? ' dn-card-park' : '');
+    el.dataset.kind = 'student';
     el.dataset.student = s.id;
     el.dataset.name = s.name;
     el.innerHTML = '<span class="dn-grip" aria-hidden="true">⠿</span>' +
@@ -564,6 +604,7 @@
     const box = park.querySelector('[data-park-teachers]');
     const el = document.createElement('div');
     el.className = 'dn-teacher-card free';
+    el.dataset.kind = 'teacher';
     el.dataset.teacher = t.id;
     el.dataset.name = t.name;
     el.innerHTML = '<span class="dn-tgrip" aria-hidden="true">⠿</span><span class="dn-tname"></span><span class="dn-trole">بلا حلقة</span>';
@@ -571,7 +612,7 @@
     box.querySelector('.dn-tempty')?.setAttribute('hidden', '');
     box.appendChild(el);
     // أضِفه إلى قوائم اختيار الأستاذ في نماذج الإضافة
-    document.querySelectorAll('.dn-addform[data-kind="circle"] select').forEach(sel => {
+    document.querySelectorAll('.dn-addform select[name="teacher_id"]').forEach(sel => {
       const o = document.createElement('option');
       o.value = t.id; o.textContent = t.name;
       sel.appendChild(o);
@@ -601,7 +642,7 @@
     }
     park.parentNode.insertBefore(sec, park);
     // أضِف الحلقة إلى قائمة اختيار الحلقة في نموذج إضافة طالب
-    const sel = document.querySelector('.dn-addform[data-kind="student"] select');
+    const sel = document.querySelector('.dn-addform select[name="circle_id"]');
     if (sel) {
       const o = document.createElement('option');
       o.value = c.id; o.textContent = c.name;
@@ -612,6 +653,49 @@
       return n + ' حلقة';
     });
   }
+
+  /* ═════ بديل مضمون للنقل: انقر البطاقة ثم انقر الحاوية ═════
+     إن فشل السحب لأي سبب (متصفح قديم، إيماءة محجوبة، شاشة غير متوقعة) يبقى النقل
+     ممكناً بنقرتين: النقرة الأولى تُعلّم البطاقة، والثانية على أي حاوية تنقلها.
+     يُلغى بالضغط على Esc أو بالنقر على البطاقة مرة أخرى. */
+  let picked = null;
+  function clearPick() {
+    if (picked) { picked.classList.remove('is-picked'); picked = null; }
+    board.classList.remove('is-picking');
+  }
+  let lastDragAt = 0;      // وقت آخر سحب حقيقي — لتجاهل «click» الذي يليه
+  let dragStartedAt = 0;   // وقت بدء السحب (لتمييز نقرة المتصفح التابعة)
+  function pickCard(card) {
+    clearPick();
+    picked = card;
+    card.classList.add('is-picked');
+    board.classList.add('is-picking');
+    const hint = card.dataset.kind === 'teacher'
+      ? 'انقر حاويةً لنقل الأستاذ إليها (أو الحاوية الفارغة ليصبح بلا حلقة)'
+      : 'انقر حاويةً لنقل الطالب إليها — أو اضغط Esc للإلغاء';
+    setStatus('👉 ' + hint);
+  }
+  board.addEventListener('click', e => {
+    if (dragStartedAt && Date.now() - dragStartedAt < 600) { dragStartedAt = 0; return; }  // نقرة تابعة لسحب
+    if (e.target.closest('.dn-del, .dn-tdel, .dn-addone, .dn-quickadd, .dn-inline-add')) return;
+    const col = e.target.closest(COL_SEL);
+    // نقرة على حاوية وهناك بطاقة مُعلَّمة ⇒ تنفيذ النقل
+    if (picked && col) {
+      const card = picked;
+      const from = card.closest(COL_SEL);
+      clearPick();
+      if (from === col) { setStatus('نفس الحاوية — لم يتغيّر شيء'); return; }
+      if (isTeacherCard(card)) moveTeacher(card, col);
+      else doMove(card, from, col, false);
+      return;
+    }
+    const card = e.target.closest('.dn-card, .dn-teacher-card');
+    if (!card) { if (picked) clearPick(); return; }
+    // النقر على بطاقة مُعلَّمة يُلغي التعليم
+    if (card === picked) { clearPick(); setStatus(''); return; }
+    pickCard(card);
+  });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && picked) { clearPick(); setStatus('أُلغي النقل'); } });
 
   /* ═════════ سلة الحذف ═════════
      ضغط ✕ لا يحذف شيئاً: يضع العنصر في السلة (يبدو كأنه محذوف) ويُثبَّت الحذف فعلياً

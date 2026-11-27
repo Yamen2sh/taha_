@@ -1311,3 +1311,11 @@ label.shake{animation:shakeX .3s 2}
 .dn-inline-ok:disabled{opacity:.5}
 .dn-inline-no{border:1px solid var(--accent-light);background:#fff;color:#9c8a71;border-radius:7px;
   font:inherit;font-size:11px;font-weight:800;padding:4px 7px;cursor:pointer;line-height:1}
+
+/* نقل بنقرتين (بديل مضمون للسحب): البطاقة المُعلَّمة + إبراز الحاويات القابلة */
+.dn-card.is-picked,.dn-teacher-card.is-picked{outline:3px solid var(--primary);outline-offset:1px;
+  background:#fff4e2;box-shadow:0 0 0 5px rgba(177,127,74,.16)}
+.dn-board.is-picking .dn-col:not(.is-picked-col){cursor:copy}
+.dn-board.is-picking .dn-col,.dn-board.is-picking .dn-park{border-color:var(--primary);
+  box-shadow:0 0 0 3px rgba(177,127,74,.18)}
+.dn-board.is-picking .dn-col:hover,.dn-board.is-picking .dn-park:hover{background:#fff8ee}
