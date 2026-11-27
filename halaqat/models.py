@@ -96,13 +96,27 @@ class Circle(models.Model):
         return {'total': total, 'recorded': recorded, 'complete': total > 0 and recorded >= total}
 
 
+class StudentQuerySet(models.QuerySet):
+    """استعلامات الطلاب مع تمييز المفصولين عن النشطين."""
+
+    def active(self):
+        """الطلاب النشطون فقط (غير مفصولين) — الافتراضي في لوحات الحضور والتسميع."""
+        return self.filter(withdrawn_at__isnull=True)
+
+    def withdrawn(self):
+        """الطلاب المفصولون فقط — تظهر لإعادتهم عند عودتهم."""
+        return self.filter(withdrawn_at__isnull=False)
+
+
 class Student(models.Model):
-    """طالب داخل حلقة"""
+    """طالب داخل حلقة — سجله لا يُحذف، بل يُفصل ثم يُعاد."""
     name = models.CharField('اسم الطالب', max_length=150)
     phone = models.CharField('رقم الهاتف', max_length=20, blank=True)
     circle = models.ForeignKey(
         Circle, verbose_name='الحلقة',
-        on_delete=models.CASCADE, related_name='students',
+        # SET_NULL (لا CASCADE): حذف حلقة يجب ألّا يمحو سجلات طلابها — يصبحون «بلا حلقة»
+        # فيبقى حضورهم وتسميعهم محفوظاً، ويمكن إعادتهم إلى حلقة لاحقاً.
+        on_delete=models.SET_NULL, null=True, blank=True, related_name='students',
     )
     notes = models.CharField('ملاحظات', max_length=255, blank=True)
     birth_date = models.DateField('تاريخ الميلاد', null=True, blank=True,
@@ -110,8 +124,14 @@ class Student(models.Model):
     # الحاوية المؤقتة في لوحة الفرز: الطالب يبقى في حلقته في قاعدة البيانات لكنه يُخفى
     # من صفحات الحضور/التسميع حتى يُسحب إلى حلقة أخرى (parked_at = وقت الوضع).
     parked_at = models.DateTimeField('موضوع في الحاوية المؤقتة', null=True, blank=True)
+    # الفصل: لا يُحذف سجل الطالب أبداً — يُختم بالتاريخ ويختفي من لوحات الحضور والتسميع،
+    # مع بقاء حضوره وتسميعه السابق. «إعادته» = مسح هذا الختم وإسناد حلقة له.
+    withdrawn_at = models.DateTimeField('تاريخ الفصل', null=True, blank=True)
+    withdrawn_reason = models.CharField('سبب الفصل', max_length=200, blank=True)
     joined_at = models.DateTimeField('تاريخ الانضمام', auto_now_add=True)
     updated_at = models.DateTimeField('آخر تعديل', auto_now=True, null=True)
+
+    objects = StudentQuerySet.as_manager()
 
     class Meta:
         verbose_name = 'طالب'
@@ -120,6 +140,22 @@ class Student(models.Model):
 
     def __str__(self):
         return self.name
+
+    def withdraw(self, reason=''):
+        """فصل الطالب: يبقى السجل والسجلات، ويخرج من الحلقات والحضور."""
+        self.withdrawn_at = timezone.now()
+        self.withdrawn_reason = (reason or '').strip()[:200]
+        self.parked_at = None
+        self.save(update_fields=['withdrawn_at', 'withdrawn_reason', 'parked_at', 'updated_at'])
+
+    def reinstate(self, circle=None):
+        """إعادة طالب مفصول: يُمسح ختم الفصل ويُسند إلى حلقة (اختياري)."""
+        self.withdrawn_at = None
+        self.withdrawn_reason = ''
+        self.parked_at = None
+        if circle is not None:
+            self.circle = circle
+        self.save(update_fields=['withdrawn_at', 'withdrawn_reason', 'parked_at', 'circle', 'updated_at'])
 
     @property
     def age(self):
@@ -132,6 +168,11 @@ class Student(models.Model):
     def is_parked(self):
         """هل الطالب موضوع مؤقتاً في الحاوية الفارغة بلوحة الفرز؟"""
         return self.parked_at is not None
+
+    @property
+    def is_withdrawn(self):
+        """هل الطالب مفصول (سجله محفوظ، لكنه خارج الحلقات والحضور)؟"""
+        return self.withdrawn_at is not None
 
     @property
     def birth_year(self):
@@ -191,7 +232,8 @@ class Attendance(models.Model):
     )
     circle = models.ForeignKey(
         Circle, verbose_name='الحلقة',
-        on_delete=models.CASCADE, related_name='attendance_records',
+        # SET_NULL: حذف الحلقة لا يمحو سجل الحضور — يبقى السجل مربوطاً بالطالب.
+        on_delete=models.SET_NULL, null=True, blank=True, related_name='attendance_records',
     )
     date = models.DateField('التاريخ', default=timezone.now)
     status = models.CharField('الحالة', max_length=10, choices=STATUS_CHOICES, default='present')
@@ -219,7 +261,7 @@ class TeacherAttendance(models.Model):
     )
     circle = models.ForeignKey(
         Circle, verbose_name='الحلقة',
-        on_delete=models.CASCADE, related_name='teacher_attendance_records',
+        on_delete=models.SET_NULL, null=True, blank=True, related_name='teacher_attendance_records',
     )
     date = models.DateField('التاريخ', default=timezone.now)
     status = models.CharField('الحالة', max_length=10, choices=STATUS_CHOICES, default='present')
@@ -412,7 +454,8 @@ class Recitation(models.Model):
     )
     circle = models.ForeignKey(
         Circle, verbose_name='الحلقة',
-        on_delete=models.CASCADE, related_name='recitations',
+        # SET_NULL: حذف الحلقة لا يمحو سجل التسميع.
+        on_delete=models.SET_NULL, null=True, blank=True, related_name='recitations',
     )
     date = models.DateField('تاريخ التسميع', default=timezone.localdate)
     kind = models.CharField('النوع', max_length=10, choices=KIND_CHOICES, default='new')
