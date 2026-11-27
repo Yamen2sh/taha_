@@ -459,8 +459,27 @@
     el.className = 'dn-card' + (s.parked ? ' dn-card-park' : '');
     el.dataset.student = s.id;
     el.dataset.name = s.name;
-    el.innerHTML = '<span class="dn-grip" aria-hidden="true">⠿</span><span class="dn-name"></span>';
-    el.querySelector('.dn-name').textContent = s.name;
+    el.innerHTML = '<span class="dn-grip" aria-hidden="true">⠿</span>' +
+      '<span class="dn-ring" data-ring style="--rate:0;--ring:#7A5AA8;--ink:#4d3471" title="لا سجلات حضور بعد">' +
+      '<span class="dn-ring-txt">جديد</span></span><span class="dn-name"></span>';
+    const nm = el.querySelector('.dn-name');
+    nm.textContent = s.name;
+    // الطالب المُضاف الآن لا يملك سجلات لشهر كامل ⇒ تظهر «جديد»
+    if (s.is_new !== false) {
+      const b = document.createElement('span');
+      b.className = 'new-badge';
+      b.textContent = 'جديد';
+      b.title = 'لم يكمل شهراً من السجلات بعد';
+      nm.appendChild(b);
+    }
+    const x = document.createElement('button');
+    x.type = 'button';
+    x.className = 'dn-del';
+    x.dataset.delStudent = s.id;
+    x.dataset.name = s.name;
+    x.textContent = '✕';
+    x.title = 'وضع في سلة الحذف';
+    el.appendChild(x);
     if (s.last_page) {
       const t = document.createElement('span');
       t.className = 'mini-tag page'; t.textContent = 'ص ' + s.last_page; t.title = 'آخر صفحة مسمّعة';
